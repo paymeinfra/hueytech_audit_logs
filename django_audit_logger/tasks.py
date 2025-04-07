@@ -3,6 +3,7 @@ Celery tasks for asynchronous logging operations.
 """
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 
 try:
@@ -21,7 +22,7 @@ from .mongo_storage import mongo_storage
 logger = logging.getLogger('django_audit_logger')
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue=os.environ.get('AUDIT_CELERY_QUEUE', 'audit_logs'))
 def create_request_log_entry(
     self,
     method: str,

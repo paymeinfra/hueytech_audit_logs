@@ -200,6 +200,12 @@ AUDIT_LOGGER_MAX_BODY_LENGTH=8192
 AUDIT_LOGS_ASYNC_LOGGING=False
 ```
 
+### Celery Queue Configuration
+
+```
+AUDIT_CELERY_QUEUE=audit_logs
+```
+
 See the `.env.example` file for a complete example of all available environment variables.
 
 ## Database Router Configuration
@@ -606,3 +612,52 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Environment Variables
+
+The Django Audit Logger can be configured using the following environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| AUDIT_LOGS_DB_NAME | PostgreSQL database name | audit_logs_db |
+| AUDIT_LOGS_DB_USER | PostgreSQL database user | audit_user |
+| AUDIT_LOGS_DB_PASSWORD | PostgreSQL database password | secure_password |
+| AUDIT_LOGS_DB_HOST | PostgreSQL database host | localhost |
+| AUDIT_LOGS_DB_PORT | PostgreSQL database port | 5432 |
+| AUDIT_LOGS_USE_MONGO | Use MongoDB for storage | False |
+| AUDIT_LOGS_WRITE_TO_BOTH | Write to both PostgreSQL and MongoDB | False |
+| AUDIT_LOGS_MONGO_URI | MongoDB connection URI | mongodb://localhost:27017/ |
+| AUDIT_LOGS_MONGO_DB_NAME | MongoDB database name | audit_logs |
+| AUDIT_LOGS_MONGO_REQUEST_LOGS_COLLECTION | MongoDB collection for request logs | request_logs |
+| AUDIT_LOGS_MONGO_GUNICORN_LOGS_COLLECTION | MongoDB collection for Gunicorn logs | gunicorn_logs |
+| AUDIT_LOGS_ASYNC_LOGGING | Enable asynchronous logging with Celery | False |
+| AUDIT_CELERY_QUEUE | Celery queue name for audit logging tasks | audit_logs |
+| AUDIT_LOGGER_MAX_BODY_LENGTH | Maximum length for request/response bodies | 8192 |
+| AUDIT_LOGS_SAVE_FULL_BODY | Save complete request/response bodies without truncation | False |
+| AUDIT_LOGGER_ERROR_EMAIL_SENDER | Email sender for error notifications | alerts@yourdomain.com |
+| AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS | Email recipients for error notifications | admin@yourdomain.com |
+| AUDIT_LOGGER_RAISE_EXCEPTIONS | Raise exceptions instead of logging them | False |
+
+## Body Size Configuration
+
+By default, Django Audit Logger truncates request and response bodies to 8192 bytes to prevent excessive database usage. You can customize this behavior in two ways:
+
+1. **Adjust the maximum body length**:
+   ```python
+   # In your Django settings
+   AUDIT_LOGGER_MAX_BODY_LENGTH = 16384  # 16KB
+   ```
+
+2. **Save complete bodies without truncation**:
+   ```python
+   # In your Django settings
+   AUDIT_LOGS_SAVE_FULL_BODY = True
+   ```
+
+When `AUDIT_LOGS_SAVE_FULL_BODY` is enabled, the entire request and response bodies will be saved regardless of size. This is particularly useful when:
+
+- You need complete audit trails for compliance purposes
+- You're debugging complex API interactions
+- You're using MongoDB as your storage backend, which handles large documents efficiently
+
+**Note**: Enabling this option may significantly increase storage requirements, especially for high-traffic applications with large payloads.

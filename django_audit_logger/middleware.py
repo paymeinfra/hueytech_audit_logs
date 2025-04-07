@@ -44,6 +44,10 @@ class RequestLogMiddleware:
             self.get_response, 'max_body_length',
             8192
         )
+        # Check if we should save the full body regardless of size
+        self.save_full_body = getattr(
+            settings, 'AUDIT_LOGS_SAVE_FULL_BODY', False
+        )
         # Check if async logging is enabled
         self.use_async_logging = getattr(
             settings, 'AUDIT_LOGS_ASYNC_LOGGING', True
@@ -148,7 +152,7 @@ class RequestLogMiddleware:
                 logger.warning("Failed to capture request body: %s", e)
         
         # Truncate body if needed
-        if 'body' in request_data and isinstance(request_data['body'], str):
+        if not self.save_full_body and 'body' in request_data and isinstance(request_data['body'], str):
             if len(request_data['body']) > self.max_body_length:
                 request_data['body'] = request_data['body'][:self.max_body_length] + '... [truncated]'
         
@@ -193,7 +197,7 @@ class RequestLogMiddleware:
                     response_data['content'] = mask_sensitive_data(content, self.sensitive_fields)
                     
                 # Truncate content if needed
-                if len(response_data['content']) > self.max_body_length:
+                if not self.save_full_body and len(response_data['content']) > self.max_body_length:
                     response_data['content'] = response_data['content'][:self.max_body_length] + '... [truncated]'
             except (ValueError, TypeError, AttributeError, KeyError) as e:
                 logger.warning("Failed to capture response content: %s", e)
