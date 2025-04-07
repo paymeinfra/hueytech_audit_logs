@@ -127,12 +127,12 @@ def create_request_log_entry(
             'query_params': query_params,
             'headers': request_headers,
             'body': request_body,
-            'client_ip': client_ip,
+            'ip_address': client_ip,
             'user_id': user_id,
             'status_code': status_code,
             'response_headers': response_headers,
             'response_body': response_body,
-            'execution_time': execution_time
+            'response_time_ms': int(execution_time * 1000) if execution_time else None
         }
         
         # MongoDB storage logic
@@ -152,12 +152,12 @@ def create_request_log_entry(
                 query_params=query_params,
                 headers=request_headers,
                 body=request_body,
-                client_ip=client_ip,
+                ip_address=client_ip,
                 user_id=user_id,
                 status_code=status_code,
                 response_headers=response_headers,
                 response_body=response_body,
-                execution_time=execution_time
+                response_time_ms=int(execution_time * 1000) if execution_time else None
             )
             logger.debug("Successfully created PostgreSQL log entry for %s %s", method, path)
             

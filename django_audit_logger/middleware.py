@@ -271,12 +271,12 @@ class RequestLogMiddleware:
                 'query_params': query_params,
                 'headers': request_headers,
                 'body': request_data.get('body', ''),
-                'client_ip': request_data.get('client_ip', ''),
+                'ip_address': request_data.get('client_ip', ''),
                 'user_id': user_id,
                 'status_code': response_data['status_code'],
                 'response_headers': response_headers,
                 'response_body': response_data.get('content', ''),
-                'execution_time': execution_time
+                'response_time_ms': int(execution_time * 1000) if execution_time else None
             }
             
             # MongoDB storage logic if configured
