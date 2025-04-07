@@ -14,7 +14,9 @@ except ImportError:
             return func
         return decorator if args and callable(args[0]) else decorator
 
+from django.conf import settings
 from .models import RequestLog
+from .mongo_storage import mongo_storage
 
 logger = logging.getLogger('django_audit_logger')
 
@@ -50,6 +52,10 @@ def create_request_log_entry(
         response_body: Response body
         execution_time: Execution time in seconds
     """
+    # Check storage configuration
+    use_mongo = getattr(settings, 'AUDIT_LOGS_USE_MONGO', False)
+    write_to_both = getattr(settings, 'AUDIT_LOGS_WRITE_TO_BOTH', False)
+    
     try:
         # Convert dictionaries to JSON strings if they're not already
         if isinstance(query_params, dict):
@@ -61,21 +67,35 @@ def create_request_log_entry(
         if isinstance(response_headers, dict):
             response_headers = json.dumps(response_headers)
         
-        # Create log entry
-        RequestLog.objects.create(
-            method=method,
-            path=path,
-            query_params=query_params,
-            request_headers=request_headers,
-            request_body=request_body,
-            client_ip=client_ip,
-            user_id=user_id,
-            status_code=status_code,
-            response_headers=response_headers,
-            response_body=response_body,
-            execution_time=execution_time
-        )
-        logger.debug("Successfully created log entry for %s %s", method, path)
+        # Prepare log data dictionary for reuse
+        log_data = {
+            'method': method,
+            'path': path,
+            'query_params': query_params,
+            'request_headers': request_headers,
+            'request_body': request_body,
+            'client_ip': client_ip,
+            'user_id': user_id,
+            'status_code': status_code,
+            'response_headers': response_headers,
+            'response_body': response_body,
+            'execution_time': execution_time
+        }
+        
+        # MongoDB storage logic
+        mongo_success = False
+        if (use_mongo or write_to_both) and mongo_storage.is_available():
+            mongo_success = mongo_storage.create_request_log(**log_data)
+            if mongo_success:
+                logger.debug("Successfully created MongoDB log entry for %s %s", method, path)
+            else:
+                logger.warning("Failed to create MongoDB log entry for %s %s", method, path)
+        
+        # PostgreSQL storage logic
+        if not use_mongo or write_to_both or (use_mongo and not mongo_success):
+            RequestLog.objects.create(**log_data)
+            logger.debug("Successfully created PostgreSQL log entry for %s %s", method, path)
+            
     except (RequestLog.DoesNotExist, RequestLog.MultipleObjectsReturned, 
             ValueError, TypeError, json.JSONDecodeError) as exc:
         # Using specific exceptions instead of broad Exception

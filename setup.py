@@ -17,6 +17,7 @@ setup(
     ],
     extras_require={
         'async': ["celery>=5.2.0"],
+        'mongo': ["pymongo>=4.0.0", "dnspython>=2.0.0"],
     },
     author="payme-alok",
     author_email="infra@paymeindia.in",

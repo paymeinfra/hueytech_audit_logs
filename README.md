@@ -135,16 +135,74 @@ AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS='admin@yourdomain.com,devops@yourdomain.com'
 AUDIT_LOGS_RAISE_EXCEPTIONS='False'  # Set to 'True' to re-raise exceptions after logging
 ```
 
-Make sure to add these variables to your `.env` file or environment configuration. The package uses python-dotenv to automatically load variables from a `.env` file.
+## Environment Variables
 
-### Database Considerations
+Django Audit Logger can be configured using environment variables. Here's a list of available environment variables:
 
-- The GunicornLogModel has a 120-day retention policy by default
-- For high-traffic sites, consider database partitioning by date
-- Ensure your database is properly sized to handle the log volume
-- Consider setting up database maintenance tasks to optimize log tables
+### Database Configuration
 
-### Database Router Configuration
+```
+# PostgreSQL Database Configuration
+AUDIT_LOGS_DB_NAME=audit_logs_db
+AUDIT_LOGS_DB_USER=audit_user
+AUDIT_LOGS_DB_PASSWORD=secure_password
+AUDIT_LOGS_DB_HOST=localhost
+AUDIT_LOGS_DB_PORT=5432
+
+# MongoDB Configuration
+AUDIT_LOGS_USE_MONGO=False
+AUDIT_LOGS_WRITE_TO_BOTH=False
+AUDIT_LOGS_MONGO_URI=mongodb+srv://username:password@cluster0.example.mongodb.net/
+AUDIT_LOGS_MONGO_DB_NAME=audit_logs
+AUDIT_LOGS_MONGO_REQUEST_LOGS_COLLECTION=request_logs
+AUDIT_LOGS_MONGO_GUNICORN_LOGS_COLLECTION=gunicorn_logs
+```
+
+### Gunicorn Configuration
+
+```
+# Gunicorn Server Settings
+GUNICORN_BIND=0.0.0.0:8000
+GUNICORN_WORKERS=4
+GUNICORN_LOG_LEVEL=info
+GUNICORN_ACCESS_LOG=-
+GUNICORN_ERROR_LOG=-
+GUNICORN_MAX_REQUESTS=1000
+GUNICORN_MAX_REQUESTS_JITTER=50
+
+# File Rotation Configuration
+GUNICORN_LOG_DIR=/var/log/gunicorn
+GUNICORN_LOG_MAX_BYTES=10485760
+GUNICORN_LOG_BACKUP_COUNT=10
+```
+
+### AWS and Email Configuration
+
+```
+# AWS Credentials for SES Email Notifications
+AUDIT_LOGS_AWS_ACCESS_KEY_ID=your-aws-access-key
+AUDIT_LOGS_AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+AUDIT_LOGS_AWS_SES_REGION_NAME=us-east-1
+
+# Email Notification Settings
+AUDIT_LOGGER_ERROR_EMAIL_SENDER=alerts@yourdomain.com
+AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS=admin@yourdomain.com,devops@yourdomain.com
+AUDIT_LOGGER_RAISE_EXCEPTIONS=False
+```
+
+### Other Settings
+
+```
+# Audit Logger Settings
+AUDIT_LOGGER_MAX_BODY_LENGTH=8192
+
+# Async Logging Configuration
+AUDIT_LOGS_ASYNC_LOGGING=False
+```
+
+See the `.env.example` file for a complete example of all available environment variables.
+
+## Database Router Configuration
 
 The package includes a custom database router (`AuditLogRouter`) that directs all audit log operations to a dedicated database. This separation improves performance by keeping log writes from affecting your main application database.
 
@@ -360,6 +418,120 @@ python manage.py cleanup_audit_logs --log-type=request
 # Clean up only Gunicorn logs
 python manage.py cleanup_audit_logs --log-type=gunicorn
 ```
+
+## MongoDB Support for High-Volume Logging
+
+For extremely high-volume applications handling billions of requests, Django Audit Logger now supports MongoDB as an alternative storage backend. MongoDB provides better scaling capabilities for write-heavy workloads compared to traditional relational databases.
+
+### Installation
+
+Install the package with MongoDB support:
+
+```bash
+pip install django-audit-logger[mongo]
+```
+
+### Configuration
+
+Add MongoDB connection settings to your Django settings:
+
+```python
+# MongoDB configuration for audit logs
+AUDIT_LOGS_USE_MONGO = True
+AUDIT_LOGS_MONGO = {
+    'URI': 'mongodb://username:password@10.0.0.1:27017,10.0.0.2:27017,10.0.0.3:27017/?replicaSet=rs0&authSource=admin',
+    'DB_NAME': 'audit_logs',
+    'REQUEST_LOGS_COLLECTION': 'request_logs',
+    'GUNICORN_LOGS_COLLECTION': 'gunicorn_logs'
+}
+```
+
+#### Connecting to Different MongoDB Deployments
+
+The package supports various MongoDB deployment types:
+
+1. **Self-Managed MongoDB Cluster**:
+   ```
+   AUDIT_LOGS_MONGO_URI=mongodb://username:password@10.0.0.1:27017,10.0.0.2:27017,10.0.0.3:27017/?replicaSet=rs0&authSource=admin
+   ```
+
+2. **MongoDB Atlas (Cloud)**:
+   ```
+   AUDIT_LOGS_MONGO_URI=mongodb+srv://username:password@cluster0.example.mongodb.net/
+   ```
+
+3. **Single MongoDB Instance**:
+   ```
+   AUDIT_LOGS_MONGO_URI=mongodb://username:password@localhost:27017/
+   ```
+
+The connection string supports all standard MongoDB connection options, including:
+- Replica set configuration
+- Authentication mechanisms
+- SSL/TLS options
+- Connection pool settings
+- Read preference and write concern
+
+### Benefits of MongoDB Storage
+
+- **Horizontal Scaling**: MongoDB can be easily scaled across multiple servers in a sharded cluster
+- **Schema Flexibility**: No migrations needed when log structure changes
+- **High Write Throughput**: Optimized for high-volume write operations
+- **Automatic Sharding**: Distributes data across multiple machines
+- **Document-Oriented**: Better suited for storing JSON-like log data
+
+### Fallback Mechanism
+
+If MongoDB is enabled but unavailable, the system will automatically fall back to PostgreSQL storage. This ensures your logs are always captured, even during MongoDB maintenance or outages.
+
+### Query Examples
+
+```python
+# Import the MongoDB storage backend
+from django_audit_logger.mongo_storage import mongo_storage
+
+# Get recent error logs
+error_logs = mongo_storage.get_request_logs(
+    status_code=500,
+    limit=100
+)
+
+# Get logs for a specific user
+user_logs = mongo_storage.get_request_logs(
+    user_id='user123',
+    limit=50
+)
+
+# Clean up old logs
+deleted_count = mongo_storage.cleanup_old_logs(days=90)
+```
+
+## Dual Storage: PostgreSQL and MongoDB
+
+For critical applications that require both the relational capabilities of PostgreSQL and the scaling advantages of MongoDB, Django Audit Logger supports writing logs to both databases simultaneously.
+
+### Configuration
+
+Enable dual storage by adding the following to your Django settings:
+
+```python
+# Enable writing to both PostgreSQL and MongoDB
+AUDIT_LOGS_USE_MONGO = True  # MongoDB must be enabled
+AUDIT_LOGS_WRITE_TO_BOTH = True  # Write to both databases
+```
+
+### Benefits of Dual Storage
+
+- **Data Redundancy**: Critical logs are stored in two separate database systems
+- **Flexible Querying**: Use SQL for complex relational queries and MongoDB for high-volume analytics
+- **Migration Path**: Gradually transition from PostgreSQL to MongoDB while maintaining data integrity
+- **Performance Optimization**: Use PostgreSQL for transactional integrity and MongoDB for high-throughput logging
+
+### Performance Considerations
+
+When dual storage is enabled, the system attempts to write to MongoDB first. If the MongoDB write succeeds, it proceeds to write to PostgreSQL. This approach ensures that the faster MongoDB write doesn't have to wait for the PostgreSQL write to complete.
+
+If MongoDB is temporarily unavailable, the system will still write to PostgreSQL, ensuring no data loss occurs during MongoDB outages.
 
 ## Examples
 
