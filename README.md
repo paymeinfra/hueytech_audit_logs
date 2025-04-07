@@ -116,12 +116,75 @@ GUNICORN_LOG_MAX_BYTES=10485760       # Maximum log file size (10MB default)
 GUNICORN_LOG_BACKUP_COUNT=10          # Number of backup files to keep
 ```
 
+### Error Email Notifications
+
+The package includes an error notification system that sends emails via AWS SES when exceptions occur in the middleware or logging system. Configure it using these environment variables:
+
+```bash
+# AWS Credentials (required for SES email notifications)
+AWS_ACCESS_KEY_ID='your-access-key'
+AWS_SECRET_ACCESS_KEY='your-secret-key'
+AWS_SES_REGION_NAME='us-east-1'  # AWS region for SES
+
+# Email Configuration
+AUDIT_LOGGER_ERROR_EMAIL_SENDER='alerts@yourdomain.com'
+AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS='admin@yourdomain.com,devops@yourdomain.com'
+AUDIT_LOGGER_RAISE_EXCEPTIONS='False'  # Set to 'True' to re-raise exceptions after logging
+```
+
+Make sure to add these variables to your `.env` file or environment configuration. The package uses python-dotenv to automatically load variables from a `.env` file.
+
 ### Database Considerations
 
 - The GunicornLogModel has a 120-day retention policy by default
 - For high-traffic sites, consider database partitioning by date
 - Ensure your database is properly sized to handle the log volume
 - Consider setting up database maintenance tasks to optimize log tables
+
+### Database Router Configuration
+
+The package includes a custom database router (`AuditLogRouter`) that directs all audit log operations to a dedicated database. This separation improves performance by keeping log writes from affecting your main application database.
+
+To use the router, add the following to your Django settings:
+
+```python
+# settings.py
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'your_main_db',
+        # ... other database settings
+    },
+    'audit_logs': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'audit_logs_db',
+        'USER': os.environ.get('AUDIT_LOGS_DB_USER', 'postgres'),
+        'PASSWORD': os.environ.get('AUDIT_LOGS_DB_PASSWORD', ''),
+        'HOST': os.environ.get('AUDIT_LOGS_DB_HOST', 'localhost'),
+        'PORT': os.environ.get('AUDIT_LOGS_DB_PORT', '5432'),
+    }
+}
+
+DATABASE_ROUTERS = ['django_audit_logger.routers.AuditLogRouter']
+```
+
+Make sure to create the `audit_logs_db` database before running migrations:
+
+```bash
+createdb audit_logs_db
+python manage.py migrate django_audit_logger --database=audit_logs
+```
+
+For production environments, add the database credentials to your `.env` file:
+
+```bash
+AUDIT_LOGS_DB_NAME=audit_logs_db
+AUDIT_LOGS_DB_USER=audit_user
+AUDIT_LOGS_DB_PASSWORD=secure_password
+AUDIT_LOGS_DB_HOST=your-db-host.example.com
+AUDIT_LOGS_DB_PORT=5432
+```
 
 ## Usage
 
@@ -199,76 +262,75 @@ python manage.py cleanup_audit_logs --log-type=request
 python manage.py cleanup_audit_logs --log-type=gunicorn
 ```
 
-## Customization
+## Examples
 
-### Custom User ID Extraction
+The package includes several example files to help you get started:
 
-You can define a custom function to extract user IDs:
+### Settings Example
 
-```python
-# In your project's utils.py
-def get_custom_user_id(request):
-    if hasattr(request, 'user') and request.user.is_authenticated:
-        return request.user.email  # Or any other identifier
-    return None
+Check out `examples/settings_example.py` for a complete example of how to configure Django settings for the audit logger, including:
 
-# In settings.py
-AUDIT_LOGGER = {
-    # ... other settings
-    'USER_ID_CALLABLE': 'path.to.your.utils.get_custom_user_id',
-}
+- Database router configuration
+- Error email notification settings
+- Logging configuration
+- Environment variable integration
+
+### Usage Examples
+
+The `examples/usage_example.py` file demonstrates:
+
+- How to use the `capture_exception_and_notify` decorator
+- How to run migrations for the audit logs database
+- How to check database connections
+- Example API views that are automatically logged
+
+### Custom Middleware Example
+
+The `examples/custom_middleware_example.py` file shows how to extend the base middleware:
+
+- Add custom fields to log entries
+- Implement custom masking for sensitive data
+- Add custom error handling and notifications
+
+### Database Setup Script
+
+The `examples/setup_audit_logs_db.py` script helps you set up a separate database for audit logs:
+
+```bash
+# Run the setup script
+python examples/setup_audit_logs_db.py --project-path /path/to/your/project --db-name audit_logs_db
 ```
-
-### Adding Custom Data
-
-You can add custom data to each log entry:
-
-```python
-# In your project's utils.py
-def get_extra_data(request, response):
-    return {
-        'tenant_id': getattr(request, 'tenant_id', None),
-        'correlation_id': request.headers.get('X-Correlation-ID'),
-        # Add any other custom data
-    }
-
-# In settings.py
-AUDIT_LOGGER = {
-    # ... other settings
-    'EXTRA_DATA_CALLABLE': 'path.to.your.utils.get_extra_data',
-}
-```
-
-## Performance Considerations
-
-- For high-traffic sites, consider using a separate database for audit logs
-- Use the `EXCLUDE_PATHS` and `EXCLUDE_EXTENSIONS` settings to avoid logging static files
-- Set appropriate values for `MAX_BODY_LENGTH` to prevent storing excessive data
-- Consider implementing a periodic cleanup job for old logs
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Database Connection Issues**
-   - Ensure PostgreSQL is running and accessible
-   - Verify database credentials are correct
+1. **Missing Dependencies**
+   - Ensure boto3 is installed for email notifications: `pip install boto3`
+   - Ensure python-dotenv is installed for environment variables: `pip install python-dotenv`
 
-2. **Performance Impact**
-   - If you notice performance degradation, try disabling request/response body logging
-   - Increase the exclusion paths for high-traffic, low-value endpoints
+2. **Database Connection Issues**
+   - Check database credentials in your .env file
+   - Ensure the audit_logs database exists
+   - Run migrations with: `python manage.py migrate django_audit_logger --database=audit_logs`
 
-3. **Log Directory Permissions**
-   - Ensure the Gunicorn process has write permissions to the log directory
-   - If using Docker, make sure the log volume is properly mounted
+3. **Email Notification Issues**
+   - Verify AWS credentials are correctly set
+   - Check that SES is configured in your AWS account
+   - Ensure sender email is verified in SES
 
-4. **Log Rotation Issues**
-   - Check file permissions for log directory
-   - Verify log rotation configuration in gunicorn_config.py
+4. **Performance Issues**
+   - Consider increasing the `AUDIT_LOGGER_MAX_BODY_LENGTH` setting
+   - Exclude more paths in `AUDIT_LOGGER_EXCLUDE_PATHS`
+   - Set up regular database maintenance for the audit logs table
+
+### Getting Help
+
+If you encounter issues not covered in this documentation, please open an issue on the GitHub repository.
 
 ## License
 
-MIT License - See LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contributing
 

@@ -4,223 +4,221 @@ Middleware for logging requests and responses to the database.
 import json
 import time
 import logging
-from typing import Any, Dict, Optional, Callable, Union
+from typing import Any, Dict, Callable
 
 from .models import RequestLog
 from .utils import get_client_ip, mask_sensitive_data
+from .email_utils import capture_exception_and_notify
 
 logger = logging.getLogger('django_audit_logger')
 
 
 class RequestLogMiddleware:
     """
-    Middleware that logs all requests and responses to the database.
+    Middleware for logging requests and responses to the database.
     """
-    
+
     def __init__(self, get_response: Callable) -> None:
+        """
+        Initialize the middleware.
+        
+        Args:
+            get_response: The next middleware or view in the chain
+        """
         self.get_response = get_response
-        self.enabled = True
-        self.log_request_body = True
-        self.log_response_body = True
-        self.max_body_length = 10000
-        self.sensitive_fields = ['password', 'token', 'access', 'refresh']
-        self.excluded_paths = ['/health', '/ping', '/favicon.ico']
-        self.excluded_extensions = ['.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.ico']
-        self.get_user_id = self._get_user_id
-        self.get_extra_data = None
-    
-    def _should_skip_logging(self, request: Any) -> bool:
-        """
-        Determine if logging should be skipped for this request.
-        """
-        # Skip if path is in excluded paths
-        if request.path in self.excluded_paths:
-            return True
-        
-        # Skip if path ends with excluded extension
-        for ext in self.excluded_extensions:
-            if request.path.endswith(ext):
-                return True
-        
-        return False
-    
-    def _get_user_id(self, request: Any) -> Optional[str]:
-        """
-        Get the user ID from the request.
-        """
-        if hasattr(request, 'user') and hasattr(request.user, 'id'):
-            return str(request.user.id)
-        return None
-    
+        self.sensitive_fields = getattr(
+            self.get_response, 'sensitive_fields',
+            ['password', 'token', 'access', 'refresh', 'secret', 'passwd', 'authorization', 'api_key']
+        )
+        self.exclude_paths = getattr(
+            self.get_response, 'exclude_paths',
+            ['/admin/jsi18n/', '/static/', '/media/']
+        )
+        self.exclude_extensions = getattr(
+            self.get_response, 'exclude_extensions',
+            ['.css', '.js', '.ico', '.jpg', '.png', '.gif', '.svg']
+        )
+        self.max_body_length = getattr(
+            self.get_response, 'max_body_length',
+            8192
+        )
+
+    @capture_exception_and_notify
     def __call__(self, request: Any) -> Any:
-        if not self.enabled or self._should_skip_logging(request):
-            return self.get_response(request)
+        """
+        Process the request and response.
         
-        # Start timing the request
+        Args:
+            request: The Django request object
+            
+        Returns:
+            The Django response object
+        """
+        # Skip logging for excluded paths
+        path = request.path
+        
+        if any(path.startswith(prefix) for prefix in self.exclude_paths):
+            return self.get_response(request)
+            
+        if any(path.endswith(ext) for ext in self.exclude_extensions):
+            return self.get_response(request)
+            
+        # Start timer
         start_time = time.time()
         
-        # Capture request data
+        # Process request
         request_data = self._capture_request_data(request)
         
-        # Get the original request body so we can restore it after reading
-        if hasattr(request, 'body'):
-            request._body = request.body
+        # Get response
+        response = self.get_response(request)
         
-        # Process the request and capture the response
-        try:
-            response = self.get_response(request)
-            response_data = self._capture_response_data(response)
-            status_code = response.status_code
-        except (ValueError, TypeError, AttributeError, KeyError) as e:
-            logger.exception("Exception in request processing: %s", e)
-            response_data = {
-                'headers': {},
-                'body': "Error processing request",
-            }
-            status_code = 500
-            # Re-raise the exception to let Django handle it
-            raise
-        finally:
-            # Calculate response time
-            response_time = int((time.time() - start_time) * 1000)  # in milliseconds
-            
-            # Create the log entry
-            try:
-                self._create_log_entry(request, request_data, response_data, status_code, response_time)
-            except (ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError) as e:
-                # Log the error but don't disrupt the request/response cycle
-                logger.exception("Failed to create audit log entry: %s", e)
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
+        # Process response
+        response_data = self._capture_response_data(response)
+        
+        # Create log entry
+        self._create_log_entry(request, request_data, response, response_data, execution_time)
         
         return response
-    
+
+    @capture_exception_and_notify
     def _capture_request_data(self, request: Any) -> Dict[str, Any]:
         """
-        Capture relevant data from the request.
+        Capture data from the request.
+        
+        Args:
+            request: The Django request object
+            
+        Returns:
+            dict: Request data
         """
-        headers = {}
-        for key, value in request.META.items():
-            if key.startswith('HTTP_'):
-                header_name = key[5:].lower().replace('_', '-')
-                headers[header_name] = value
-            elif key in ('CONTENT_TYPE', 'CONTENT_LENGTH'):
-                header_name = key.lower().replace('_', '-')
-                headers[header_name] = value
-        
-        # Get request body if enabled
-        body = None
-        if self.log_request_body and hasattr(request, 'body'):
-            try:
-                if isinstance(request.body, bytes):
-                    body = request.body.decode('utf-8', errors='replace')
-                else:
-                    body = str(request.body)
-                
-                # Mask sensitive data
-                body = mask_sensitive_data(body, self.sensitive_fields)
-                
-                # Truncate if too long
-                if len(body) > self.max_body_length:
-                    body = body[:self.max_body_length] + '... [truncated]'
-            except (UnicodeDecodeError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as e:
-                logger.warning("Failed to capture request body: %s", e)
-                body = "[Error capturing request body]"
-        
-        # Get query parameters
-        query_params = None
-        if request.GET:
-            try:
-                query_dict = dict(request.GET)
-                # Mask sensitive data in query params
-                for field in self.sensitive_fields:
-                    if field in query_dict:
-                        query_dict[field] = '********'
-                query_params = json.dumps(query_dict)
-            except (ValueError, TypeError, json.JSONDecodeError) as e:
-                logger.warning("Failed to capture query parameters: %s", e)
-                query_params = "[Error capturing query parameters]"
-        
-        return {
-            'headers': headers,
-            'body': body,
-            'query_params': query_params,
-            'content_type': request.content_type if hasattr(request, 'content_type') else None,
+        request_data = {
+            'method': request.method,
+            'path': request.path,
+            'query_params': request.GET.dict(),
+            'headers': dict(request.headers.items()),
+            'client_ip': get_client_ip(request),
         }
-    
+        
+        # Mask sensitive headers
+        if 'headers' in request_data and request_data['headers']:
+            for field in self.sensitive_fields:
+                if field.lower() in request_data['headers']:
+                    request_data['headers'][field.lower()] = '********'
+        
+        # Get request body
+        if request.method in ['POST', 'PUT', 'PATCH']:
+            try:
+                if request.content_type == 'application/json':
+                    # Handle JSON request body
+                    try:
+                        body = json.loads(request.body.decode('utf-8'))
+                        # Mask sensitive data
+                        body_str = json.dumps(body)
+                        masked_body = mask_sensitive_data(body_str, self.sensitive_fields)
+                        request_data['body'] = masked_body
+                    except (ValueError, TypeError, json.JSONDecodeError) as e:
+                        logger.warning("Failed to parse JSON request body: %s", e)
+                        # Try to mask sensitive data in raw body
+                        body_str = request.body.decode('utf-8', errors='replace')
+                        request_data['body'] = mask_sensitive_data(body_str, self.sensitive_fields)
+                else:
+                    # Handle form data
+                    request_data['body'] = mask_sensitive_data(
+                        str(request.POST.dict()), 
+                        self.sensitive_fields
+                    )
+            except (ValueError, TypeError, AttributeError, KeyError) as e:
+                logger.warning("Failed to capture request body: %s", e)
+        
+        # Truncate body if needed
+        if 'body' in request_data and isinstance(request_data['body'], str):
+            if len(request_data['body']) > self.max_body_length:
+                request_data['body'] = request_data['body'][:self.max_body_length] + '... [truncated]'
+        
+        return request_data
+
+    @capture_exception_and_notify
     def _capture_response_data(self, response: Any) -> Dict[str, Any]:
         """
-        Capture relevant data from the response.
+        Capture data from the response.
+        
+        Args:
+            response: The Django response object
+            
+        Returns:
+            dict: Response data
         """
-        headers = {}
-        for key, value in response.items():
-            headers[key.lower()] = value
-        
-        # Get response body if enabled
-        body = None
-        if self.log_response_body:
-            try:
-                # For streaming responses, we can't capture the body
-                if hasattr(response, 'streaming') and response.streaming:
-                    body = "[Streaming response]"
-                elif hasattr(response, 'content'):
-                    if isinstance(response.content, bytes):
-                        body = response.content.decode('utf-8', errors='replace')
-                    else:
-                        body = str(response.content)
-                    
-                    # Truncate if too long
-                    if len(body) > self.max_body_length:
-                        body = body[:self.max_body_length] + '... [truncated]'
-            except (UnicodeDecodeError, ValueError, TypeError, AttributeError) as e:
-                logger.warning("Failed to capture response body: %s", e)
-                body = "[Error capturing response body]"
-        
-        return {
-            'headers': headers,
-            'body': body,
+        response_data = {
+            'status_code': response.status_code,
+            'headers': dict(response.items()),
         }
-    
-    def _create_log_entry(self, request: Any, request_data: Dict[str, Any], response_data: Dict[str, Any], status_code: int, response_time: int) -> None:
+        
+        # Mask sensitive headers
+        if 'headers' in response_data and response_data['headers']:
+            for field in self.sensitive_fields:
+                if field.lower() in response_data['headers']:
+                    response_data['headers'][field.lower()] = '********'
+        
+        # Get response content
+        if hasattr(response, 'content'):
+            try:
+                content = response.content.decode('utf-8', errors='replace')
+                
+                # Try to parse as JSON
+                try:
+                    json_content = json.loads(content)
+                    # Mask sensitive data
+                    content_str = json.dumps(json_content)
+                    masked_content = mask_sensitive_data(content_str, self.sensitive_fields)
+                    response_data['content'] = masked_content
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    # Not JSON, use raw content
+                    response_data['content'] = mask_sensitive_data(content, self.sensitive_fields)
+                    
+                # Truncate content if needed
+                if len(response_data['content']) > self.max_body_length:
+                    response_data['content'] = response_data['content'][:self.max_body_length] + '... [truncated]'
+            except (ValueError, TypeError, AttributeError, KeyError) as e:
+                logger.warning("Failed to capture response content: %s", e)
+        
+        return response_data
+
+    @capture_exception_and_notify
+    def _create_log_entry(self, request: Any, request_data: Dict[str, Any], 
+                         response: Any, response_data: Dict[str, Any], 
+                         execution_time: float) -> None:
         """
         Create a log entry in the database.
+        
+        Args:
+            request: The Django request object
+            request_data: Request data
+            response: The Django response object (unused in base implementation, but may be used in subclasses)
+            response_data: Response data
+            execution_time: Execution time in seconds
         """
-        # Get user ID
+        # Get user ID if available
         user_id = None
-        try:
-            user_id = self.get_user_id(request)
-        except (ValueError, TypeError, AttributeError) as e:
-            logger.warning("Failed to get user ID: %s", e)
+        if hasattr(request, 'user') and hasattr(request.user, 'id'):
+            user_id = request.user.id
         
-        # Get extra data if callable is provided
-        extra_data = {}
-        if self.get_extra_data:
-            try:
-                extra_data = self.get_extra_data(request, response_data)
-            except (ValueError, TypeError, AttributeError) as e:
-                logger.warning("Failed to get extra data: %s", e)
-        
-        # Get session ID if available
-        session_id = None
-        if hasattr(request, 'session') and hasattr(request.session, 'session_key'):
-            session_id = request.session.session_key
-        
-        # Create the log entry
+        # Create log entry
         try:
             RequestLog.objects.create(
-                method=request.method,
-                path=request.path,
-                query_params=request_data['query_params'],
-                headers=request_data['headers'],
-                body=request_data['body'],
-                content_type=request_data['content_type'],
-                status_code=status_code,
-                response_headers=response_data['headers'],
-                response_body=response_data['body'],
-                response_time_ms=response_time,
-                ip_address=get_client_ip(request),
+                method=request_data['method'],
+                path=request_data['path'],
+                query_params=json.dumps(request_data.get('query_params', {})),
+                request_headers=json.dumps(request_data.get('headers', {})),
+                request_body=request_data.get('body', ''),
+                client_ip=request_data.get('client_ip', ''),
                 user_id=user_id,
-                user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                session_id=session_id,
-                extra_data=extra_data,
+                status_code=response_data['status_code'],
+                response_headers=json.dumps(response_data.get('headers', {})),
+                response_body=response_data.get('content', ''),
+                execution_time=execution_time
             )
         except (ValueError, TypeError, AttributeError, KeyError) as e:
-            logger.warning("Failed to create RequestLog object: %s", e)
+            logger.error("Failed to create log entry: %s", e)

@@ -12,6 +12,8 @@ setup(
         "Django>=3.2",
         "psycopg2-binary>=2.9.3",
         "gunicorn>=20.1.0",
+        "boto3>=1.26.0",
+        "python-dotenv>=0.21.0",
     ],
     author="Your Organization",
     author_email="admin@yourorganization.com",
