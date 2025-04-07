@@ -206,8 +206,8 @@ class RequestLogMiddleware:
 
     @capture_exception_and_notify
     def _create_log_entry(self, request: Any, request_data: Dict[str, Any], 
-                         _: Any, response_data: Dict[str, Any], 
-                         execution_time: float) -> None:
+                     _: Any, response_data: Dict[str, Any], 
+                     execution_time: float) -> None:
         """
         Create a log entry in the database.
         
@@ -226,39 +226,77 @@ class RequestLogMiddleware:
         # Create log entry
         try:
             if self.use_async_logging:
-                # Import here to avoid circular imports
-                from .tasks import create_request_log_entry
-                
-                # Call the Celery task
-                create_request_log_entry.delay(
-                    method=request_data['method'],
-                    path=request_data['path'],
-                    query_params=request_data.get('query_params', {}),
-                    request_headers=request_data.get('headers', {}),
-                    request_body=request_data.get('body', ''),
-                    client_ip=request_data.get('client_ip', ''),
-                    user_id=user_id,
-                    status_code=response_data['status_code'],
-                    response_headers=response_data.get('headers', {}),
-                    response_body=response_data.get('content', ''),
-                    execution_time=execution_time
-                )
-                logger.debug(f"Queued async log entry for {request_data['method']} {request_data['path']}")
-            else:
-                # Create log entry synchronously
-                RequestLog.objects.create(
-                    method=request_data['method'],
-                    path=request_data['path'],
-                    query_params=json.dumps(request_data.get('query_params', {})),
-                    request_headers=json.dumps(request_data.get('headers', {})),
-                    request_body=request_data.get('body', ''),
-                    client_ip=request_data.get('client_ip', ''),
-                    user_id=user_id,
-                    status_code=response_data['status_code'],
-                    response_headers=json.dumps(response_data.get('headers', {})),
-                    response_body=response_data.get('content', ''),
-                    execution_time=execution_time
-                )
+                try:
+                    # Import here to avoid circular imports
+                    from .tasks import create_request_log_entry, are_celery_workers_running
+                    
+                    # Only use Celery if workers are actually running
+                    if are_celery_workers_running():
+                        # Call the Celery task
+                        create_request_log_entry.delay(
+                            method=request_data['method'],
+                            path=request_data['path'],
+                            query_params=request_data.get('query_params', {}),
+                            request_headers=request_data.get('headers', {}),
+                            request_body=request_data.get('body', ''),
+                            client_ip=request_data.get('client_ip', ''),
+                            user_id=user_id,
+                            status_code=response_data['status_code'],
+                            response_headers=response_data.get('headers', {}),
+                            response_body=response_data.get('content', ''),
+                            execution_time=execution_time
+                        )
+                        logger.debug(f"Queued async log entry for {request_data['method']} {request_data['path']}")
+                        return
+                    else:
+                        logger.debug("Celery workers not running, falling back to synchronous logging")
+                except (ImportError, AttributeError) as e:
+                    logger.warning(f"Failed to use Celery for async logging: {e}. Falling back to synchronous logging")
+            
+            # Create log entry synchronously (either by choice or as fallback)
+            from .models import RequestLog
+            
+            # Check storage configuration
+            use_mongo = getattr(settings, 'AUDIT_LOGS_USE_MONGO', False)
+            write_to_both = getattr(settings, 'AUDIT_LOGS_WRITE_TO_BOTH', False)
+            
+            # Prepare log data
+            query_params = json.dumps(request_data.get('query_params', {})) if isinstance(request_data.get('query_params'), dict) else request_data.get('query_params', '{}')
+            request_headers = json.dumps(request_data.get('headers', {})) if isinstance(request_data.get('headers'), dict) else request_data.get('headers', '{}')
+            response_headers = json.dumps(response_data.get('headers', {})) if isinstance(response_data.get('headers'), dict) else response_data.get('headers', '{}')
+            
+            log_data = {
+                'method': request_data['method'],
+                'path': request_data['path'],
+                'query_params': query_params,
+                'headers': request_headers,
+                'body': request_data.get('body', ''),
+                'client_ip': request_data.get('client_ip', ''),
+                'user_id': user_id,
+                'status_code': response_data['status_code'],
+                'response_headers': response_headers,
+                'response_body': response_data.get('content', ''),
+                'execution_time': execution_time
+            }
+            
+            # MongoDB storage logic if configured
+            mongo_success = False
+            if (use_mongo or write_to_both):
+                try:
+                    from .mongo_storage import mongo_storage
+                    if mongo_storage.is_available():
+                        mongo_success = mongo_storage.create_request_log(**log_data)
+                        if mongo_success:
+                            logger.debug(f"Successfully created MongoDB log entry for {request_data['method']} {request_data['path']}")
+                        else:
+                            logger.warning(f"Failed to create MongoDB log entry for {request_data['method']} {request_data['path']}")
+                except ImportError:
+                    logger.warning("MongoDB storage not available")
+            
+            # PostgreSQL storage logic
+            if not use_mongo or write_to_both or (use_mongo and not mongo_success):
+                RequestLog.objects.create(**log_data)
                 logger.debug(f"Created sync log entry for {request_data['method']} {request_data['path']}")
+                
         except (ValueError, TypeError, AttributeError, KeyError) as e:
             logger.error("Failed to create log entry: %s", e)

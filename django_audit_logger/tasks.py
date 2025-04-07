@@ -4,10 +4,26 @@ Celery tasks for asynchronous logging operations.
 import json
 import logging
 import os
-from typing import Dict, Any, Optional
+import time
+from typing import Dict, Any, Optional, Callable
+
+# Flag to track if Celery is available
+CELERY_AVAILABLE = False
+celery_app = None
 
 try:
-    from celery import shared_task
+    from celery import shared_task, Celery
+    from celery.exceptions import OperationalError
+    CELERY_AVAILABLE = True
+    
+    # Get a reference to the Celery app for worker checks
+    try:
+        from django.conf import settings
+        celery_app = Celery()
+        celery_app.config_from_object('django.conf:settings', namespace='CELERY')
+    except (ImportError, AttributeError):
+        pass
+        
 except ImportError:
     # Create a dummy decorator for environments without Celery
     def shared_task(*args, **kwargs):
@@ -22,7 +38,43 @@ from .mongo_storage import mongo_storage
 logger = logging.getLogger('django_audit_logger')
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue=os.environ.get('AUDIT_CELERY_QUEUE', 'audit_logs'))
+def are_celery_workers_running() -> bool:
+    """
+    Check if Celery workers are running.
+    
+    Returns:
+        bool: True if workers are running, False otherwise
+    """
+    if not CELERY_AVAILABLE or celery_app is None:
+        return False
+        
+    try:
+        # Try to ping workers with a timeout
+        inspector = celery_app.control.inspect()
+        stats = inspector.stats()
+        if stats:
+            # If we get stats back, workers are running
+            return True
+        return False
+    except (OperationalError, IOError, ConnectionRefusedError, TimeoutError):
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking Celery workers: {e}")
+        return False
+
+
+# Define the task parameters
+task_params = {
+    'bind': True,
+    'max_retries': 3,
+    'default_retry_delay': 60,
+    'queue': os.environ.get('AUDIT_CELERY_QUEUE', 'audit_logs')
+}
+
+# Only apply task parameters if Celery is available
+task_decorator = shared_task(**task_params) if CELERY_AVAILABLE else shared_task()
+
+@task_decorator
 def create_request_log_entry(
     self,
     method: str,
@@ -73,8 +125,8 @@ def create_request_log_entry(
             'method': method,
             'path': path,
             'query_params': query_params,
-            'request_headers': request_headers,
-            'request_body': request_body,
+            'headers': request_headers,
+            'body': request_body,
             'client_ip': client_ip,
             'user_id': user_id,
             'status_code': status_code,
@@ -94,11 +146,24 @@ def create_request_log_entry(
         
         # PostgreSQL storage logic
         if not use_mongo or write_to_both or (use_mongo and not mongo_success):
-            RequestLog.objects.create(**log_data)
+            RequestLog.objects.create(
+                method=method,
+                path=path,
+                query_params=query_params,
+                headers=request_headers,
+                body=request_body,
+                client_ip=client_ip,
+                user_id=user_id,
+                status_code=status_code,
+                response_headers=response_headers,
+                response_body=response_body,
+                execution_time=execution_time
+            )
             logger.debug("Successfully created PostgreSQL log entry for %s %s", method, path)
             
     except (RequestLog.DoesNotExist, RequestLog.MultipleObjectsReturned, 
             ValueError, TypeError, json.JSONDecodeError) as exc:
         # Using specific exceptions instead of broad Exception
         logger.error("Failed to create log entry: %s", exc)
-        self.retry(exc=exc)
+        if CELERY_AVAILABLE and hasattr(self, 'retry'):
+            self.retry(exc=exc)
