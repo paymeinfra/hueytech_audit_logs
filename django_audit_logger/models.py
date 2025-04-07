@@ -2,6 +2,7 @@
 Database models for the Django Audit Logger package.
 """
 import json
+from typing import Dict, Any, Optional, Union
 from django.db import models
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -46,11 +47,11 @@ class RequestLog(models.Model):
             models.Index(fields=['timestamp', 'ip_address']),
         ]
     
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.method} {self.path} - {self.status_code} ({self.timestamp.strftime('%Y-%m-%d %H:%M:%S')})"
     
     @cached_property
-    def headers_dict(self):
+    def headers_dict(self) -> Dict[str, Any]:
         """
         Return headers as a dictionary.
         """
@@ -62,7 +63,7 @@ class RequestLog(models.Model):
         return self.headers
     
     @cached_property
-    def response_headers_dict(self):
+    def response_headers_dict(self) -> Dict[str, Any]:
         """
         Return response headers as a dictionary.
         """
@@ -74,7 +75,7 @@ class RequestLog(models.Model):
         return self.response_headers
     
     @cached_property
-    def extra_data_dict(self):
+    def extra_data_dict(self) -> Dict[str, Any]:
         """
         Return extra data as a dictionary.
         """
@@ -84,3 +85,43 @@ class RequestLog(models.Model):
             except json.JSONDecodeError:
                 return {}
         return self.extra_data
+
+
+class GunicornLogModel(models.Model):
+    """
+    Model for storing Gunicorn access logs.
+    """
+    # Request information
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+    method = models.CharField(max_length=10, choices=[(choice.name, choice.value) for choice in __import__('django_audit_logger.choices').choices.UsageLogMethodChoices], db_index=True)
+    url = models.TextField(db_index=True)
+    host = models.CharField(max_length=255, db_index=True)
+    
+    # User information
+    user_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    user_ip = models.GenericIPAddressField(null=True, blank=True, db_index=True)
+    agent = models.CharField(max_length=255, null=True, blank=True)
+    source = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Request and response data
+    request = models.JSONField(default=dict)
+    response = models.JSONField(default=dict)
+    headers = models.JSONField(default=dict)
+    
+    # Performance metrics
+    duration = models.IntegerField(null=True, blank=True)  # microseconds
+    code = models.IntegerField(null=True, blank=True, db_index=True)
+    
+    class Meta:
+        verbose_name = "Gunicorn Log"
+        verbose_name_plural = "Gunicorn Logs"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['timestamp', 'method']),
+            models.Index(fields=['timestamp', 'code']),
+            models.Index(fields=['timestamp', 'user_id']),
+            models.Index(fields=['timestamp', 'user_ip']),
+        ]
+    
+    def __str__(self) -> str:
+        return f"{self.method} {self.url} - {self.code} ({self.timestamp.strftime('%Y-%m-%d %H:%M:%S')})"

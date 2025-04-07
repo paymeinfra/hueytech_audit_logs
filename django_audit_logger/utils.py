@@ -4,11 +4,12 @@ Utility functions for the Django Audit Logger package.
 import json
 import re
 import logging
+from typing import Optional, Union, Dict, List, Any
 
 logger = logging.getLogger(__name__)
 
 
-def get_client_ip(request):
+def get_client_ip(request: Any) -> str:
     """
     Get the client IP address from the request.
     
@@ -27,7 +28,7 @@ def get_client_ip(request):
     return ip
 
 
-def get_user_id(request):
+def get_user_id(request: Any) -> Optional[Union[int, str]]:
     """
     Get the user ID from the request.
     
@@ -42,7 +43,7 @@ def get_user_id(request):
     return None
 
 
-def mask_sensitive_data(data_str, sensitive_fields=None):
+def mask_sensitive_data(data_str: str, sensitive_fields: Optional[List[str]] = None) -> str:
     """
     Mask sensitive data in a string (JSON or form data).
     
@@ -60,7 +61,7 @@ def mask_sensitive_data(data_str, sensitive_fields=None):
         # Try to parse as JSON
         data = json.loads(data_str)
         is_json = True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, json.JSONDecodeError):
         # Not JSON, treat as form data
         data = data_str
         is_json = False
@@ -77,7 +78,7 @@ def mask_sensitive_data(data_str, sensitive_fields=None):
         return data
 
 
-def _mask_sensitive_json(data, sensitive_fields, path=""):
+def _mask_sensitive_json(data: Any, sensitive_fields: List[str], path: str = "") -> None:
     """
     Recursively mask sensitive fields in a JSON object.
     
@@ -102,9 +103,16 @@ def _mask_sensitive_json(data, sensitive_fields, path=""):
             _mask_sensitive_json(item, sensitive_fields, current_path)
 
 
-def truncate_data(data, max_length):
+def truncate_data(data: str, max_length: int) -> str:
     """
     Truncate data to the specified maximum length.
+    
+    Args:
+        data (str): The data to truncate
+        max_length (int): Maximum length of the data
+        
+    Returns:
+        str: Truncated data
     """
     if not data or not isinstance(data, str):
         return data

@@ -94,18 +94,47 @@ The package is designed with production use in mind:
 - Configurable retention periods
 - Error handling to prevent disruption of the request/response cycle
 
+## Production Deployment
+
+### Gunicorn Configuration
+
+The package provides a custom Gunicorn logger that logs requests to both a rotating file and the database. Configure it using these environment variables:
+
+```bash
+# Basic Gunicorn configuration
+GUNICORN_BIND='0.0.0.0:8000'  # Address and port to bind to
+GUNICORN_WORKERS=4            # Number of worker processes
+GUNICORN_LOG_LEVEL='info'     # Logging level (debug, info, warning, error, critical)
+GUNICORN_ACCESS_LOG='-'       # Path for access logs ('-' for stdout)
+GUNICORN_ERROR_LOG='-'        # Path for error logs ('-' for stderr)
+GUNICORN_MAX_REQUESTS=1000    # Maximum requests before worker restart
+GUNICORN_MAX_REQUESTS_JITTER=50  # Random jitter to avoid all workers restarting at once
+
+# File rotation configuration
+GUNICORN_LOG_DIR='/var/log/gunicorn'  # Directory for log files
+GUNICORN_LOG_MAX_BYTES=10485760       # Maximum log file size (10MB default)
+GUNICORN_LOG_BACKUP_COUNT=10          # Number of backup files to keep
+```
+
+### Database Considerations
+
+- The GunicornLogModel has a 120-day retention policy by default
+- For high-traffic sites, consider database partitioning by date
+- Ensure your database is properly sized to handle the log volume
+- Consider setting up database maintenance tasks to optimize log tables
+
 ## Usage
 
 Once installed and configured, the middleware will automatically log all requests and responses according to your settings.
 
 ### Accessing Logs
 
-You can access the logs through the Django admin interface or directly via the `RequestLog` model:
+You can access the logs through the Django admin interface or directly via the `RequestLog` and `GunicornLogModel` models:
 
 ```python
-from django_audit_logger.models import RequestLog
+from django_audit_logger.models import RequestLog, GunicornLogModel
 
-# Get all logs
+# Get all Django request logs
 logs = RequestLog.objects.all()
 
 # Filter logs by path
@@ -116,11 +145,23 @@ error_logs = RequestLog.objects.filter(status_code__gte=400)
 
 # Filter logs by user
 user_logs = RequestLog.objects.filter(user_id='user123')
+
+# Get all Gunicorn access logs
+gunicorn_logs = GunicornLogModel.objects.all()
+
+# Filter Gunicorn logs by URL
+api_gunicorn_logs = GunicornLogModel.objects.filter(url__startswith='/api/')
+
+# Filter Gunicorn logs by response code
+error_gunicorn_logs = GunicornLogModel.objects.filter(code__gte=400)
+
+# Filter Gunicorn logs by user
+user_gunicorn_logs = GunicornLogModel.objects.filter(user_id='user123')
 ```
 
 ### Gunicorn Configuration
 
-To use the included Gunicorn configuration:
+To use the included Gunicorn configuration with database logging:
 
 1. Copy the `gunicorn_config.py` file to your project:
    ```bash
@@ -132,12 +173,14 @@ To use the included Gunicorn configuration:
    gunicorn your_project.wsgi:application -c gunicorn_config.py
    ```
 
+The Gunicorn configuration includes a custom logger class (`GLogger`) that logs all requests and responses to both files and the database via the `GunicornLogModel`.
+
 ## Log Maintenance
 
 The package includes a management command for cleaning up old logs:
 
 ```bash
-# Delete logs older than 90 days (default)
+# Delete all logs older than 90 days (default)
 python manage.py cleanup_audit_logs
 
 # Delete logs older than 30 days
@@ -148,6 +191,12 @@ python manage.py cleanup_audit_logs --dry-run
 
 # Control batch size for large deletions
 python manage.py cleanup_audit_logs --batch-size=5000
+
+# Clean up only request logs
+python manage.py cleanup_audit_logs --log-type=request
+
+# Clean up only Gunicorn logs
+python manage.py cleanup_audit_logs --log-type=gunicorn
 ```
 
 ## Customization
@@ -209,7 +258,11 @@ AUDIT_LOGGER = {
    - If you notice performance degradation, try disabling request/response body logging
    - Increase the exclusion paths for high-traffic, low-value endpoints
 
-3. **Log Rotation Issues**
+3. **Log Directory Permissions**
+   - Ensure the Gunicorn process has write permissions to the log directory
+   - If using Docker, make sure the log volume is properly mounted
+
+4. **Log Rotation Issues**
    - Check file permissions for log directory
    - Verify log rotation configuration in gunicorn_config.py
 
