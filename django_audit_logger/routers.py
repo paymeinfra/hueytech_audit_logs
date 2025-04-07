@@ -14,7 +14,7 @@ class AuditLogRouter:
     """
     
     audit_log_app = 'django_audit_logger'
-    audit_log_models = ['RequestLog', 'GunicornLogModel']
+    audit_log_models = ['requestlog', 'gunicornlogmodel']
     audit_log_db = 'audit_logs'
     
     def db_for_read(self, model: Type, **_: Dict[str, Any]) -> Optional[str]:

@@ -45,7 +45,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     
     # Add the Django Audit Logger middleware
-    'django_audit_logger.middleware.AuditLogMiddleware',
+    'django_audit_logger.middleware.RequestLogMiddleware',
 ]
 
 ROOT_URLCONF = 'your_project.urls'
