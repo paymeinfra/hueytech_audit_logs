@@ -6,6 +6,8 @@ import time
 import logging
 from typing import Any, Dict, Callable
 
+from django.conf import settings
+
 from .models import RequestLog
 from .utils import get_client_ip, mask_sensitive_data
 from .email_utils import capture_exception_and_notify
@@ -41,6 +43,10 @@ class RequestLogMiddleware:
         self.max_body_length = getattr(
             self.get_response, 'max_body_length',
             8192
+        )
+        # Check if async logging is enabled
+        self.use_async_logging = getattr(
+            settings, 'AUDIT_LOGS_ASYNC_LOGGING', True
         )
 
     @capture_exception_and_notify
@@ -120,16 +126,24 @@ class RequestLogMiddleware:
                         masked_body = mask_sensitive_data(body_str, self.sensitive_fields)
                         request_data['body'] = masked_body
                     except (ValueError, TypeError, json.JSONDecodeError) as e:
-                        logger.warning("Failed to parse JSON request body: %s", e)
-                        # Try to mask sensitive data in raw body
-                        body_str = request.body.decode('utf-8', errors='replace')
-                        request_data['body'] = mask_sensitive_data(body_str, self.sensitive_fields)
+                        # Not JSON, use raw body
+                        raw_body = request.body.decode('utf-8', errors='replace')
+                        masked_body = mask_sensitive_data(raw_body, self.sensitive_fields)
+                        request_data['body'] = masked_body
                 else:
                     # Handle form data
-                    request_data['body'] = mask_sensitive_data(
-                        str(request.POST.dict()), 
-                        self.sensitive_fields
-                    )
+                    try:
+                        body = request.POST.dict()
+                        # Mask sensitive data
+                        for field in self.sensitive_fields:
+                            if field in body:
+                                body[field] = '********'
+                        request_data['body'] = json.dumps(body)
+                    except (ValueError, TypeError, AttributeError) as e:
+                        # Fallback to raw body
+                        raw_body = request.body.decode('utf-8', errors='replace')
+                        masked_body = mask_sensitive_data(raw_body, self.sensitive_fields)
+                        request_data['body'] = masked_body
             except (ValueError, TypeError, AttributeError, KeyError) as e:
                 logger.warning("Failed to capture request body: %s", e)
         
@@ -207,18 +221,40 @@ class RequestLogMiddleware:
         
         # Create log entry
         try:
-            RequestLog.objects.create(
-                method=request_data['method'],
-                path=request_data['path'],
-                query_params=json.dumps(request_data.get('query_params', {})),
-                request_headers=json.dumps(request_data.get('headers', {})),
-                request_body=request_data.get('body', ''),
-                client_ip=request_data.get('client_ip', ''),
-                user_id=user_id,
-                status_code=response_data['status_code'],
-                response_headers=json.dumps(response_data.get('headers', {})),
-                response_body=response_data.get('content', ''),
-                execution_time=execution_time
-            )
+            if self.use_async_logging:
+                # Import here to avoid circular imports
+                from .tasks import create_request_log_entry
+                
+                # Call the Celery task
+                create_request_log_entry.delay(
+                    method=request_data['method'],
+                    path=request_data['path'],
+                    query_params=request_data.get('query_params', {}),
+                    request_headers=request_data.get('headers', {}),
+                    request_body=request_data.get('body', ''),
+                    client_ip=request_data.get('client_ip', ''),
+                    user_id=user_id,
+                    status_code=response_data['status_code'],
+                    response_headers=response_data.get('headers', {}),
+                    response_body=response_data.get('content', ''),
+                    execution_time=execution_time
+                )
+                logger.debug(f"Queued async log entry for {request_data['method']} {request_data['path']}")
+            else:
+                # Create log entry synchronously
+                RequestLog.objects.create(
+                    method=request_data['method'],
+                    path=request_data['path'],
+                    query_params=json.dumps(request_data.get('query_params', {})),
+                    request_headers=json.dumps(request_data.get('headers', {})),
+                    request_body=request_data.get('body', ''),
+                    client_ip=request_data.get('client_ip', ''),
+                    user_id=user_id,
+                    status_code=response_data['status_code'],
+                    response_headers=json.dumps(response_data.get('headers', {})),
+                    response_body=response_data.get('content', ''),
+                    execution_time=execution_time
+                )
+                logger.debug(f"Created sync log entry for {request_data['method']} {request_data['path']}")
         except (ValueError, TypeError, AttributeError, KeyError) as e:
             logger.error("Failed to create log entry: %s", e)

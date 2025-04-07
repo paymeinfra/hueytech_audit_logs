@@ -67,6 +67,9 @@ AUDIT_LOGGER = {
     'USER_ID_CALLABLE': 'django_audit_logger.utils.get_user_id',
     'EXTRA_DATA_CALLABLE': None,  # Optional function to add custom data
 }
+
+# Enable asynchronous logging with Celery (optional)
+AUDIT_LOGS_ASYNC_LOGGING = True
 ```
 
 ### Database Configuration
@@ -185,6 +188,44 @@ AUDIT_LOGS_DB_PASSWORD=secure_password
 AUDIT_LOGS_DB_HOST=your-db-host.example.com
 AUDIT_LOGS_DB_PORT=5432
 ```
+
+## Asynchronous Logging with Celery
+
+Django Audit Logger supports asynchronous database logging using Celery tasks. This can significantly improve performance by moving database write operations to background tasks, especially in high-traffic environments.
+
+### Installation
+
+Install the package with Celery support:
+
+```bash
+pip install django-audit-logger[async]
+```
+
+### Configuration
+
+1. Configure Celery in your Django project as per the [Celery documentation](https://docs.celeryproject.org/en/stable/django/first-steps-with-django.html).
+
+2. Enable asynchronous logging in your settings:
+
+```python
+# Enable asynchronous logging with Celery
+AUDIT_LOGS_ASYNC_LOGGING = True
+```
+
+### Benefits
+
+- Reduced request processing time
+- Improved application responsiveness
+- Better handling of logging spikes during high traffic
+- Fault tolerance with automatic retries for failed log entries
+
+### Considerations
+
+- Requires a running Celery worker
+- Logs might be slightly delayed in appearing in the database
+- Memory usage may increase if there's a large backlog of tasks
+
+If Celery is not available or `AUDIT_LOGS_ASYNC_LOGGING` is set to `False`, the middleware will fall back to synchronous logging.
 
 ## Usage
 

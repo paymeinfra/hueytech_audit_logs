@@ -15,6 +15,9 @@ setup(
         "boto3>=1.26.0",
         "python-dotenv>=0.21.0",
     ],
+    extras_require={
+        'async': ["celery>=5.2.0"],
+    },
     author="payme-alok",
     author_email="infra@paymeindia.in",
     description="A Django middleware for logging requests and responses to PostgreSQL with dual logging capabilities",
