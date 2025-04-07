@@ -76,7 +76,8 @@ def create_request_log_entry(
             execution_time=execution_time
         )
         logger.debug("Successfully created log entry for %s %s", method, path)
-    except Exception as exc:  # pylint: disable=broad-except
-        # Using broad exception to catch any database or serialization issues
+    except (RequestLog.DoesNotExist, RequestLog.MultipleObjectsReturned, 
+            ValueError, TypeError, json.JSONDecodeError) as exc:
+        # Using specific exceptions instead of broad Exception
         logger.error("Failed to create log entry: %s", exc)
         self.retry(exc=exc)

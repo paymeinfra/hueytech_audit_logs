@@ -56,7 +56,7 @@ MIDDLEWARE = [
 ]
 
 # Audit Logger Settings
-AUDIT_LOGGER = {
+AUDIT_LOGS = {
     'ENABLED': True,
     'LOG_REQUEST_BODY': True,
     'LOG_RESPONSE_BODY': True,
@@ -130,9 +130,9 @@ AWS_SECRET_ACCESS_KEY='your-secret-key'
 AWS_SES_REGION_NAME='us-east-1'  # AWS region for SES
 
 # Email Configuration
-AUDIT_LOGGER_ERROR_EMAIL_SENDER='alerts@yourdomain.com'
-AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS='admin@yourdomain.com,devops@yourdomain.com'
-AUDIT_LOGGER_RAISE_EXCEPTIONS='False'  # Set to 'True' to re-raise exceptions after logging
+AUDIT_LOGS_ERROR_EMAIL_SENDER='alerts@yourdomain.com'
+AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS='admin@yourdomain.com,devops@yourdomain.com'
+AUDIT_LOGS_RAISE_EXCEPTIONS='False'  # Set to 'True' to re-raise exceptions after logging
 ```
 
 Make sure to add these variables to your `.env` file or environment configuration. The package uses python-dotenv to automatically load variables from a `.env` file.
@@ -219,15 +219,73 @@ AUDIT_LOGS_ASYNC_LOGGING = True
 - Better handling of logging spikes during high traffic
 - Fault tolerance with automatic retries for failed log entries
 
+### Retry Mechanism
+
+The asynchronous logging system includes a robust retry mechanism for handling failures:
+
+- **Automatic Retries**: Failed logging tasks are automatically retried up to 3 times
+- **Exponential Backoff**: 60-second delay between retries with exponential backoff
+- **Error Logging**: All retry attempts are logged for monitoring
+- **Exception Handling**: Handles database unavailability, network issues, and resource constraints
+
+You can customize the retry behavior in your Django settings:
+
+```python
+# Celery task retry settings for audit logging
+CELERY_TASK_ROUTES = {
+    'django_audit_logger.tasks.create_request_log_entry': {
+        'queue': 'audit_logs'
+    }
+}
+
+CELERY_TASK_ACKS_LATE = True  # Ensure tasks aren't acknowledged until completed
+```
+
+### Scaling for High-Volume Applications
+
+For extremely high-volume applications (millions to billions of requests), consider these additional configurations:
+
+1. **Database Partitioning**:
+   ```sql
+   -- Example PostgreSQL partitioning by month
+   CREATE TABLE audit_logs_partitioned (
+       LIKE django_audit_logger_requestlog INCLUDING ALL
+   ) PARTITION BY RANGE (timestamp);
+   
+   -- Create monthly partitions
+   CREATE TABLE audit_logs_y2025m04 PARTITION OF audit_logs_partitioned
+   FOR VALUES FROM ('2025-04-01') TO ('2025-05-01');
+   ```
+
+2. **Worker Scaling**:
+   ```bash
+   # Run multiple Celery workers
+   celery -A your_project worker -Q audit_logs --concurrency=8 -n audit_worker1@%h
+   celery -A your_project worker -Q audit_logs --concurrency=8 -n audit_worker2@%h
+   ```
+
+3. **Request Sampling** (add to your settings):
+   ```python
+   # Only log 10% of successful GET requests
+   AUDIT_LOGS = {
+       # ... other settings
+       'SAMPLING_RATES': {
+           'GET': {200: 0.1, 'default': 1.0},  # Log 10% of 200 GET responses, 100% of others
+           'default': 1.0  # Log all other methods
+       }
+   }
+   ```
+
 ### Considerations
 
 - Requires a running Celery worker
 - Logs might be slightly delayed in appearing in the database
 - Memory usage may increase if there's a large backlog of tasks
+- For billions of requests, implement database partitioning and log rotation
 
 If Celery is not available or `AUDIT_LOGS_ASYNC_LOGGING` is set to `False`, the middleware will fall back to synchronous logging.
 
-## Usage
+### Usage
 
 Once installed and configured, the middleware will automatically log all requests and responses according to your settings.
 
@@ -361,8 +419,8 @@ python examples/setup_audit_logs_db.py --project-path /path/to/your/project --db
    - Ensure sender email is verified in SES
 
 4. **Performance Issues**
-   - Consider increasing the `AUDIT_LOGGER_MAX_BODY_LENGTH` setting
-   - Exclude more paths in `AUDIT_LOGGER_EXCLUDE_PATHS`
+   - Consider increasing the `AUDIT_LOGS_MAX_BODY_LENGTH` setting
+   - Exclude more paths in `AUDIT_LOGS_EXCLUDE_PATHS`
    - Set up regular database maintenance for the audit logs table
 
 ### Getting Help
