@@ -1,0 +1,7 @@
+include LICENSE
+include README.md
+include django_audit_logger/gunicorn_config.py
+recursive-include django_audit_logger/migrations *
+recursive-include django_audit_logger/management *
+recursive-include django_audit_logger/templates *
+recursive-include django_audit_logger/static *
