@@ -93,7 +93,7 @@ class GunicornLogModel(models.Model):
     """
     # Request information
     timestamp = models.DateTimeField(default=timezone.now, db_index=True)
-    method = models.CharField(max_length=10, choices=[(choice.name, choice.value) for choice in __import__('django_audit_logger.choices').choices.UsageLogMethodChoices], db_index=True)
+    method = models.CharField(max_length=15, choices=[(choice.name, choice.value) for choice in __import__('django_audit_logger.choices').choices.UsageLogMethodChoices], db_index=True)
     url = models.TextField(db_index=True)
     host = models.CharField(max_length=255, db_index=True)
     
