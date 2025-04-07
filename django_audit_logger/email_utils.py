@@ -100,15 +100,15 @@ Server: {os.environ.get('HOSTNAME', 'Unknown')}
     # Get AWS region from settings or environment
     aws_region = None
     if DJANGO_AVAILABLE:
-        aws_region = getattr(settings, 'AWS_SES_REGION_NAME', None)
+        aws_region = getattr(settings, 'AUDIT_LOGS_AWS_SES_REGION_NAME', None)
     
     if not aws_region:
-        aws_region = os.environ.get('AWS_SES_REGION_NAME', 'us-east-1')
+        aws_region = os.environ.get('AUDIT_LOGS_AWS_SES_REGION_NAME', 'us-east-1')
     
     try:
         # Read AWS credentials from environment variables
-        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
-        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_access_key = os.environ.get('AUDIT_LOGS_AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AUDIT_LOGS_AWS_SECRET_ACCESS_KEY')
         
         # Check if credentials are available
         if not aws_access_key or not aws_secret_key:
@@ -149,7 +149,7 @@ Server: {os.environ.get('HOSTNAME', 'Unknown')}
     except ClientError as e:
         logger.error("Failed to send error notification email: %s", e)
         return False
-    except (ValueError, TypeError, AttributeError, KeyError) as e:
+    except (ValueError, TypeError, AttributeError, KeyError, ConnectionError) as e:
         logger.error("Error preparing email notification: %s", e)
         return False
 
@@ -167,7 +167,7 @@ def capture_exception_and_notify(func: Callable) -> Callable:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
-        except (ValueError, TypeError, AttributeError, KeyError, OSError) as e:
+        except (ValueError, TypeError, AttributeError, KeyError, OSError, ConnectionError) as e:
             # Get traceback information
             tb = traceback.format_exc()
             

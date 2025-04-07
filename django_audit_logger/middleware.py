@@ -188,7 +188,7 @@ class RequestLogMiddleware:
 
     @capture_exception_and_notify
     def _create_log_entry(self, request: Any, request_data: Dict[str, Any], 
-                         response: Any, response_data: Dict[str, Any], 
+                         _: Any, response_data: Dict[str, Any], 
                          execution_time: float) -> None:
         """
         Create a log entry in the database.
@@ -196,7 +196,7 @@ class RequestLogMiddleware:
         Args:
             request: The Django request object
             request_data: Request data
-            response: The Django response object (unused in base implementation, but may be used in subclasses)
+            _: The Django response object (unused in base implementation, but may be used in subclasses)
             response_data: Response data
             execution_time: Execution time in seconds
         """
