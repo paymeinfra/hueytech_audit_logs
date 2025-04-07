@@ -101,16 +101,25 @@ class MongoLogStorage:
         
         try:
             # Convert string JSON to dict if needed
-            for field in ['query_params', 'request_headers', 'response_headers']:
+            for field in ['query_params', 'headers', 'response_headers']:
                 if field in kwargs and isinstance(kwargs[field], str):
                     try:
                         kwargs[field] = json.loads(kwargs[field])
-                    except (json.JSONDecodeError, TypeError):
+                    except json.JSONDecodeError:
                         pass
             
             # Ensure timestamp is a datetime object
             if 'timestamp' not in kwargs:
                 kwargs['timestamp'] = datetime.now()
+            
+            # Map client_ip to ip_address if needed (for backward compatibility)
+            if 'client_ip' in kwargs and 'ip_address' not in kwargs:
+                kwargs['ip_address'] = kwargs.pop('client_ip')
+                
+            # Map execution_time to response_time_ms if needed (for backward compatibility)
+            if 'execution_time' in kwargs and 'response_time_ms' not in kwargs:
+                execution_time = kwargs.pop('execution_time')
+                kwargs['response_time_ms'] = int(execution_time * 1000) if execution_time else None
             
             # Insert document
             result = self.request_logs_collection.insert_one(kwargs)

@@ -9,27 +9,94 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# Default repository is the production PyPI
+# Default values
 REPO_URL="https://upload.pypi.org/legacy/"
 REPO_NAME="PyPI"
+DEFAULT_PACKAGE_NAME="hueytech-audit-logger"
 
-# Check if a test repository was specified
-if [ "$1" == "--test" ]; then
+# Display usage information
+function show_usage {
+    echo "Usage: $0 [--test] [--version VERSION] [PACKAGE_NAME]"
+    echo ""
+    echo "Options:"
+    echo "  --test             Upload to TestPyPI instead of production PyPI"
+    echo "  --version VERSION  Set the package version (e.g., 0.1.1)"
+    echo "  PACKAGE_NAME       Set a custom package name (default: $DEFAULT_PACKAGE_NAME)"
+    echo ""
+    echo "Examples:"
+    echo "  $0                                # Use default package name and version from setup.py"
+    echo "  $0 --version 0.2.0                # Set version to 0.2.0"
+    echo "  $0 my-package                     # Use custom package name"
+    echo "  $0 --test --version 0.2.0 my-pkg  # Test upload with custom name and version"
+    exit 1
+}
+
+# Parse arguments
+VERSION=""
+PACKAGE_NAME=$DEFAULT_PACKAGE_NAME
+USE_TEST_PYPI=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --test)
+            USE_TEST_PYPI=true
+            shift
+            ;;
+        --version)
+            if [[ -z "$2" || "$2" == --* ]]; then
+                echo -e "${RED}Error: --version requires a value${NC}"
+                show_usage
+            fi
+            VERSION="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_usage
+            ;;
+        *)
+            if [[ -z "$PACKAGE_NAME" ]]; then
+                PACKAGE_NAME="$1"
+            else
+                echo -e "${RED}Error: Too many arguments${NC}"
+                show_usage
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Set repository based on flag
+if [ "$USE_TEST_PYPI" = true ]; then
     REPO_URL="https://test.pypi.org/legacy/"
     REPO_NAME="TestPyPI"
-    shift
 fi
 
-# Check if a custom repository name was provided
-if [ -n "$1" ]; then
-    PACKAGE_NAME="$1"
+# Update package name if provided
+if [ "$PACKAGE_NAME" != "$DEFAULT_PACKAGE_NAME" ]; then
     # Update the name in setup.py
-    sed -i '' "s/name=\"django-audit-logger\"/name=\"$PACKAGE_NAME\"/" setup.py
+    sed -i '' "s/name=\"[^\"]*\"/name=\"$PACKAGE_NAME\"/" setup.py
     echo -e "${YELLOW}Package name set to: $PACKAGE_NAME${NC}"
 else
-    # Use the default name from setup.py
-    PACKAGE_NAME=$(grep -m 1 "name=" setup.py | cut -d'"' -f2)
-    echo -e "${YELLOW}Using package name from setup.py: $PACKAGE_NAME${NC}"
+    # Check if setup.py has a different name
+    SETUP_NAME=$(grep -m 1 "name=" setup.py | cut -d'"' -f2)
+    if [ "$SETUP_NAME" != "$DEFAULT_PACKAGE_NAME" ]; then
+        # Update setup.py to use the default name
+        sed -i '' "s/name=\"[^\"]*\"/name=\"$DEFAULT_PACKAGE_NAME\"/" setup.py
+        echo -e "${YELLOW}Package name set to default: $DEFAULT_PACKAGE_NAME${NC}"
+    else
+        echo -e "${YELLOW}Using default package name: $DEFAULT_PACKAGE_NAME${NC}"
+    fi
+fi
+
+# Update version if provided
+if [ -n "$VERSION" ]; then
+    # Update the version in setup.py
+    sed -i '' "s/version=\"[^\"]*\"/version=\"$VERSION\"/" setup.py
+    echo -e "${YELLOW}Package version set to: $VERSION${NC}"
+else
+    # Use the default version from setup.py
+    VERSION=$(grep -m 1 "version=" setup.py | cut -d'"' -f2)
+    echo -e "${YELLOW}Using version from setup.py: $VERSION${NC}"
 fi
 
 # Clean up any previous builds
@@ -49,7 +116,7 @@ echo -e "${YELLOW}Checking the distribution files...${NC}"
 twine check dist/*
 
 # Confirm upload
-echo -e "${YELLOW}Ready to upload to $REPO_NAME.${NC}"
+echo -e "${YELLOW}Ready to upload $PACKAGE_NAME v$VERSION to $REPO_NAME.${NC}"
 read -p "Do you want to continue? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -66,18 +133,17 @@ else
 fi
 
 # Success message
-echo -e "${GREEN}Package $PACKAGE_NAME has been uploaded to $REPO_NAME successfully!${NC}"
+echo -e "${GREEN}Package $PACKAGE_NAME v$VERSION has been uploaded to $REPO_NAME successfully!${NC}"
 
 # Installation instructions
 echo -e "${YELLOW}To install from $REPO_NAME, run:${NC}"
 if [ "$REPO_NAME" == "TestPyPI" ]; then
-    echo -e "pip install --index-url https://test.pypi.org/simple/ $PACKAGE_NAME"
+    echo -e "pip install --index-url https://test.pypi.org/simple/ $PACKAGE_NAME==$VERSION"
 else
-    echo -e "pip install $PACKAGE_NAME"
+    echo -e "pip install $PACKAGE_NAME==$VERSION"
 fi
 
 # Final notes
 echo -e "${YELLOW}Don't forget to tag this release in git:${NC}"
-VERSION=$(grep -m 1 "version=" setup.py | cut -d'"' -f2)
 echo -e "git tag -a v$VERSION -m 'version $VERSION'"
 echo -e "git push origin v$VERSION"
