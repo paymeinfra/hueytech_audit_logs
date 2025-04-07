@@ -4,7 +4,7 @@ A production-grade Django package for comprehensive request/response logging wit
 
 ## Package Structure
 
-The `django-audit-logger` package includes:
+The `django_audit_logger` package includes:
 
 1. **Core Middleware** for logging all HTTP requests and responses to PostgreSQL
 2. **Database Models** with optimized indexes for efficient querying
@@ -27,14 +27,14 @@ The `django-audit-logger` package includes:
 ### From your organization's repository
 
 ```bash
-pip install django-audit-logger --extra-index-url=https://your-org-repo-url/simple/
+pip install django_audit_logger --extra-index-url=https://your-org-repo-url/simple/
 ```
 
 ### Development installation
 
 ```bash
-git clone https://github.com/yourorganization/django-audit-logger.git
-cd django-audit-logger
+git clone https://github.com/paymeinfra/hueytech_audit_logs.git
+cd hueytech_audit_logs
 pip install -e .
 ```
 
