@@ -52,7 +52,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     # ... other middleware
-    'django_audit_logger.middleware.AuditLogMiddleware',
+    'django_audit_logger.middleware.RequestLogMiddleware',
 ]
 
 # Audit Logger Settings
