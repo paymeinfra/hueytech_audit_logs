@@ -1,0 +1,16 @@
+[run]
+source = django_audit_logger
+omit = */tests/*,*/migrations/*,*/apps.py,*/admin.py
+
+[report]
+exclude_lines = 
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if settings.DEBUG
+    pass
+    raise ImportError
+    if __name__ == "__main__":
+
+[html]
+directory = htmlcov

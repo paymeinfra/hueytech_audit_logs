@@ -1,5 +1,8 @@
 # Django Audit Logger
 
+[![CI](https://github.com/paymeinfra/hueytech_audit_logs/actions/workflows/ci.yml/badge.svg)](https://github.com/paymeinfra/hueytech_audit_logs/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/paymeinfra/hueytech_audit_logs/branch/main/graph/badge.svg)](https://codecov.io/gh/paymeinfra/hueytech_audit_logs)
+
 A production-grade Django package for comprehensive request/response logging with PostgreSQL storage and Gunicorn configuration.
 
 ## Package Structure
