@@ -41,7 +41,7 @@ class PostInstallCommand(install):
 
 setup(
     name="django-gunicorn-audit-logs",
-    version="0.3.2",
+    version="0.3.4",
     packages=find_packages(),
     install_requires=[
         "Django>=3.2",
