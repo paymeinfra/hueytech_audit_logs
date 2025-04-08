@@ -45,7 +45,7 @@ class Command(BaseCommand):
         # Get retention period from options, settings, or default
         days = options['days']
         if days is None:
-            audit_logger_settings = getattr(settings, 'AUDIT_LOGGER', {})
+            audit_logger_settings = getattr(settings, 'AUDIT_LOGS', {})
             days = audit_logger_settings.get('RETENTION_DAYS', 90)
         
         if days <= 0:

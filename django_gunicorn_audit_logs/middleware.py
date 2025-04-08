@@ -12,7 +12,7 @@ from .models import RequestLog
 from .utils import get_client_ip, mask_sensitive_data
 from .email_utils import capture_exception_and_notify
 
-logger = logging.getLogger('django_audit_logger')
+logger = logging.getLogger('django_gunicorn_audit_logs')
 
 
 class RequestLogMiddleware:

@@ -1,5 +1,5 @@
 """
-MongoDB storage backend for Django Audit Logger.
+MongoDB storage backend for Django Gunicorn Audit Logs.
 """
 import logging
 import json
@@ -40,9 +40,9 @@ try:
     from django.conf import settings
 except ImportError:
     settings = None
-    logger = logging.getLogger('django_audit_logger')
+    logger = logging.getLogger('django_gunicorn_audit_logs')
 else:
-    logger = logging.getLogger('django_audit_logger')
+    logger = logging.getLogger('django_gunicorn_audit_logs')
 
 
 # Define MongoEngine document models if available
@@ -108,7 +108,7 @@ class MongoLogStorage:
         self.gunicorn_logs_collection = None
         
         if not MONGO_AVAILABLE:
-            logger.warning("MongoDB support not available. Install with 'pip install django-audit-logger[mongo]'")
+            logger.warning("MongoDB support not available. Install with 'pip install django-gunicorn-audit-logs[mongo]'")
             return
         
         # Get MongoDB settings from environment variables or Django settings

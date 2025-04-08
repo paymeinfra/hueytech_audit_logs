@@ -1,5 +1,5 @@
 """
-Email utilities for the Django Audit Logger package.
+Email utilities for the Django Gunicorn Audit Logs package.
 """
 import os
 import logging
@@ -59,19 +59,19 @@ def send_error_email(subject: str, error_message: str, traceback_info: Optional[
     recipients_str = None
     
     if DJANGO_AVAILABLE:
-        sender = getattr(settings, 'AUDIT_LOGGER_ERROR_EMAIL_SENDER', None)
-        recipients_str = getattr(settings, 'AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS', None)
+        sender = getattr(settings, 'AUDIT_LOGS_ERROR_EMAIL_SENDER', None)
+        recipients_str = getattr(settings, 'AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS', None)
     
     # Fall back to environment variables if not found in settings
     if not sender:
-        sender = os.environ.get('AUDIT_LOGGER_ERROR_EMAIL_SENDER')
+        sender = os.environ.get('AUDIT_LOGS_ERROR_EMAIL_SENDER')
     
     if not recipients_str:
-        recipients_str = os.environ.get('AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS', '')
+        recipients_str = os.environ.get('AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS', '')
     
     # Check if email sending is enabled
     if not sender or not recipients_str:
-        logger.warning("Error email notification is not configured. Set AUDIT_LOGGER_ERROR_EMAIL_SENDER and AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS.")
+        logger.warning("Error email notification is not configured. Set AUDIT_LOGS_ERROR_EMAIL_SENDER and AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS.")
         return False
     
     # Convert recipients string to list
@@ -79,7 +79,7 @@ def send_error_email(subject: str, error_message: str, traceback_info: Optional[
     
     # Prepare email content
     body_text = f"""
-Error in Django Audit Logger:
+Error in Django Gunicorn Audit Logs:
 
 {error_message}
 
@@ -125,7 +125,7 @@ Server: {os.environ.get('HOSTNAME', 'Unknown')}
         # Prepare email
         email_message = {
             'Subject': {
-                'Data': f"[Django Audit Logger Error] {subject}"
+                'Data': f"[Django Gunicorn Audit Logs Error] {subject}"
             },
             'Body': {
                 'Text': {
@@ -182,7 +182,7 @@ def capture_exception_and_notify(func: Callable) -> Callable:
             )
             
             # Re-raise the exception if configured to do so
-            if os.environ.get('AUDIT_LOGGER_RAISE_EXCEPTIONS', 'False').lower() == 'true':
+            if os.environ.get('AUDIT_LOGS_RAISE_EXCEPTIONS', 'False').lower() == 'true':
                 raise
             
     return wrapper

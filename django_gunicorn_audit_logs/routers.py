@@ -1,5 +1,5 @@
 """
-Database routers for the Django Audit Logger package.
+Database routers for the Django Gunicorn Audit Logs package.
 """
 from typing import Any, Dict, Optional, Type
 
@@ -13,7 +13,7 @@ class AuditLogRouter:
     database for better performance and maintenance.
     """
     
-    audit_log_app = 'django_audit_logger'
+    audit_log_app = 'django_gunicorn_audit_logs'
     audit_log_models = ['requestlog', 'gunicornlogmodel']
     audit_log_db = 'audit_logs'
     

@@ -1,14 +1,19 @@
 """
 Migration to add GunicornLogModel for storing Gunicorn access logs.
 """
-from django.db import migrations, models
-import django.utils.timezone
+import json
+try:
+    from django.db import migrations, models
+    import django.utils.timezone
+except ImportError:
+    # Mock imports for linting purposes
+    migrations = models = django = None
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('django_audit_logger', '0001_initial'),
+        ('django_gunicorn_audit_logs', '0001_initial'),
     ]
 
     operations = [
@@ -38,14 +43,14 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='gunicornlogmodel',
-            index=models.Index(fields=['timestamp', 'url'], name='django_audi_timesta_guni_idx'),
+            index=models.Index(fields=['timestamp', 'url'], name='django_guni_timesta_guni_idx'),
         ),
         migrations.AddIndex(
             model_name='gunicornlogmodel',
-            index=models.Index(fields=['user_id', 'timestamp'], name='django_audi_user_id_guni_idx'),
+            index=models.Index(fields=['user_id', 'timestamp'], name='django_guni_user_id_guni_idx'),
         ),
         migrations.AddIndex(
             model_name='gunicornlogmodel',
-            index=models.Index(fields=['code', 'timestamp'], name='django_audi_code_guni_idx'),
+            index=models.Index(fields=['code', 'timestamp'], name='django_guni_code_guni_idx'),
         ),
     ]

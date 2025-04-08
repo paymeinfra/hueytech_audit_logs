@@ -35,7 +35,7 @@ from django.conf import settings
 from .models import RequestLog
 from .mongo_storage import mongo_storage
 
-logger = logging.getLogger('django_audit_logger')
+logger = logging.getLogger('django_gunicorn_audit_logs')
 
 
 def are_celery_workers_running() -> bool:

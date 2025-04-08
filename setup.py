@@ -16,7 +16,7 @@ class PostInstallCommand(install):
         
         # Get the gunicorn_config.py source path
         source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                  'django_audit_logger', 'gunicorn_config.py')
+                                  'django_gunicorn_audit_logs', 'gunicorn_config.py')
         
         # Try to determine the project directory
         # First check if we're in a Django project

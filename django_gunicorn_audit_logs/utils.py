@@ -1,5 +1,5 @@
 """
-Utility functions for the Django Audit Logger package.
+Utility functions for the Django Gunicorn Audit Logs package.
 """
 import json
 import re

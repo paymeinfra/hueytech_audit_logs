@@ -1,5 +1,5 @@
 """
-Example Django settings file showing how to configure Django Audit Logger.
+Example Django settings file showing how to configure Django Gunicorn Audit Logs.
 """
 import os
 from pathlib import Path
@@ -28,8 +28,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
-    # Add the Django Audit Logger app
-    'django_audit_logger',
+    # Add the Django Gunicorn Audit Logs app
+    'django_gunicorn_audit_logs',
     
     # Your apps
     'your_app',
@@ -44,8 +44,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     
-    # Add the Django Audit Logger middleware
-    'django_audit_logger.middleware.RequestLogMiddleware',
+    # Add the Django Gunicorn Audit Logs middleware
+    'django_gunicorn_audit_logs.middleware.RequestLogMiddleware',
 ]
 
 ROOT_URLCONF = 'your_project.urls'
@@ -90,7 +90,7 @@ DATABASES = {
 }
 
 # Configure the database router
-DATABASE_ROUTERS = ['django_audit_logger.routers.AuditLogRouter']
+DATABASE_ROUTERS = ['django_gunicorn_audit_logs.routers.AuditLogRouter']
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -121,20 +121,20 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Django Audit Logger Settings
-AUDIT_LOGGER_EXCLUDE_PATHS = [
+# Django Gunicorn Audit Logs Settings
+AUDIT_LOGS_EXCLUDE_PATHS = [
     r'^/static/',
     r'^/media/',
     r'^/favicon\.ico$',
     r'^/admin/jsi18n/',
 ]
 
-AUDIT_LOGGER_MAX_BODY_LENGTH = int(os.environ.get('AUDIT_LOGGER_MAX_BODY_LENGTH', '8192'))
+AUDIT_LOGS_MAX_BODY_LENGTH = int(os.environ.get('AUDIT_LOGS_MAX_BODY_LENGTH', '8192'))
 
-# Email notification settings for Django Audit Logger
-AUDIT_LOGGER_ERROR_EMAIL_SENDER = os.environ.get('AUDIT_LOGGER_ERROR_EMAIL_SENDER')
-AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS = os.environ.get('AUDIT_LOGGER_ERROR_EMAIL_RECIPIENTS')
-AUDIT_LOGGER_RAISE_EXCEPTIONS = os.environ.get('AUDIT_LOGGER_RAISE_EXCEPTIONS', 'False').lower() == 'true'
+# Email notification settings for Django Gunicorn Audit Logs
+AUDIT_LOGS_ERROR_EMAIL_SENDER = os.environ.get('AUDIT_LOGS_ERROR_EMAIL_SENDER')
+AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS = os.environ.get('AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS')
+AUDIT_LOGS_RAISE_EXCEPTIONS = os.environ.get('AUDIT_LOGS_RAISE_EXCEPTIONS', 'False').lower() == 'true'
 
 # AWS Settings for SES
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -176,7 +176,7 @@ LOGGING = {
             'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
             'propagate': True,
         },
-        'django_audit_logger': {
+        'django_gunicorn_audit_logs': {
             'handlers': ['console', 'file'],
             'level': 'INFO',
             'propagate': False,

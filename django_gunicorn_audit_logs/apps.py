@@ -1,16 +1,16 @@
 """
-App configuration for the Django Audit Logger package.
+App configuration for the Django Gunicorn Audit Logs package.
 """
 from django.apps import AppConfig
 
 
-class DjangoAuditLoggerConfig(AppConfig):
+class DjangoGunicornAuditLogsConfig(AppConfig):
     """
-    Configuration for the Django Audit Logger app.
+    Configuration for the Django Gunicorn Audit Logs app.
     """
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'django_audit_logger'
-    verbose_name = 'Django Audit Logger'
+    name = 'django_gunicorn_audit_logs'
+    verbose_name = 'Django Gunicorn Audit Logs'
     
     def ready(self):
         """

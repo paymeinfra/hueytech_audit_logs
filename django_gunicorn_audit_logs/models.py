@@ -1,5 +1,5 @@
 """
-Database models for the Django Audit Logger package.
+Database models for the Django Gunicorn Audit Logs package.
 """
 import json
 from typing import Dict, Any, Optional, Union
