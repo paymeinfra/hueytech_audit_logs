@@ -285,6 +285,7 @@ class RequestLogMiddleware:
                 try:
                     from .mongo_storage import mongo_storage
                     if mongo_storage.is_available():
+                        # The create_request_log method now always returns a boolean
                         mongo_success = mongo_storage.create_request_log(**log_data)
                         if mongo_success:
                             logger.debug(f"Successfully created MongoDB log entry for {request_data['method']} {request_data['path']}")

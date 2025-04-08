@@ -138,6 +138,7 @@ def create_request_log_entry(
         # MongoDB storage logic
         mongo_success = False
         if (use_mongo or write_to_both) and mongo_storage.is_available():
+            # The create_request_log method now always returns a boolean
             mongo_success = mongo_storage.create_request_log(**log_data)
             if mongo_success:
                 logger.debug("Successfully created MongoDB log entry for %s %s", method, path)

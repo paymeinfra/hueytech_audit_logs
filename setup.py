@@ -6,7 +6,7 @@ with io.open("README.md", encoding="utf-8") as f:
 
 setup(
     name="django-gunicorn-audit-logs",
-    version="0.2.0",
+    version="0.3.0",
     packages=find_packages(),
     install_requires=[
         "Django>=3.2",
