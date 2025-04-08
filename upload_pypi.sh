@@ -12,28 +12,30 @@ NC='\033[0m' # No Color
 # Default values
 REPO_URL="https://upload.pypi.org/legacy/"
 REPO_NAME="PyPI"
-DEFAULT_PACKAGE_NAME="hueytech-audit-logger"
+DEFAULT_PACKAGE_NAME="django-gunicorn-audit-logs"
 
 # Display usage information
 function show_usage {
-    echo "Usage: $0 [--test] [--version VERSION] [PACKAGE_NAME]"
+    echo "Usage: $0 [--test] [--version VERSION] [--name PACKAGE_NAME] [PACKAGE_NAME]"
     echo ""
     echo "Options:"
     echo "  --test             Upload to TestPyPI instead of production PyPI"
     echo "  --version VERSION  Set the package version (e.g., 0.1.1)"
+    echo "  --name NAME        Set the package name (e.g., my-package)"
     echo "  PACKAGE_NAME       Set a custom package name (default: $DEFAULT_PACKAGE_NAME)"
     echo ""
     echo "Examples:"
     echo "  $0                                # Use default package name and version from setup.py"
     echo "  $0 --version 0.2.0                # Set version to 0.2.0"
-    echo "  $0 my-package                     # Use custom package name"
-    echo "  $0 --test --version 0.2.0 my-pkg  # Test upload with custom name and version"
+    echo "  $0 --name my-package              # Set package name with flag"
+    echo "  $0 --version 0.2.0 --name my-pkg  # Set both version and name with flags"
+    echo "  $0 --test --version 0.2.0 --name my-pkg  # Test upload with flags"
     exit 1
 }
 
 # Parse arguments
 VERSION=""
-PACKAGE_NAME=$DEFAULT_PACKAGE_NAME
+PACKAGE_NAME=""
 USE_TEST_PYPI=false
 
 while [[ $# -gt 0 ]]; do
@@ -48,6 +50,14 @@ while [[ $# -gt 0 ]]; do
                 show_usage
             fi
             VERSION="$2"
+            shift 2
+            ;;
+        --name)
+            if [[ -z "$2" || "$2" == --* ]]; then
+                echo -e "${RED}Error: --name requires a value${NC}"
+                show_usage
+            fi
+            PACKAGE_NAME="$2"
             shift 2
             ;;
         --help|-h)
@@ -69,6 +79,11 @@ done
 if [ "$USE_TEST_PYPI" = true ]; then
     REPO_URL="https://test.pypi.org/legacy/"
     REPO_NAME="TestPyPI"
+fi
+
+# Set default package name if not provided
+if [ -z "$PACKAGE_NAME" ]; then
+    PACKAGE_NAME=$DEFAULT_PACKAGE_NAME
 fi
 
 # Update package name if provided

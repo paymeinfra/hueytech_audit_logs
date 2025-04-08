@@ -5,7 +5,7 @@ with io.open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="hueytech-audit-logger",
+    name="django-gunicorn-audit-logs",
     version="0.2.0",
     packages=find_packages(),
     install_requires=[
