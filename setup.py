@@ -1,12 +1,47 @@
 from setuptools import setup, find_packages
 import io
+import os
+import sys
+import shutil
+from setuptools.command.install import install
 
 with io.open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
+class PostInstallCommand(install):
+    """Post-installation for installation mode."""
+    def run(self):
+        # Run the standard install
+        install.run(self)
+        
+        # Get the gunicorn_config.py source path
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                  'django_audit_logger', 'gunicorn_config.py')
+        
+        # Try to determine the project directory
+        # First check if we're in a Django project
+        try:
+            # Get the current working directory or the directory from which pip was called
+            project_dir = os.getcwd()
+            
+            # Check if this looks like a Django project
+            if (os.path.exists(os.path.join(project_dir, 'manage.py')) or 
+                any(f.endswith('wsgi.py') for f in os.listdir(project_dir) if os.path.isfile(os.path.join(project_dir, f)))):
+                # Copy the file to the project directory
+                dest_path = os.path.join(project_dir, 'gunicorn_config.py')
+                print(f"Copying gunicorn_config.py to {dest_path}")
+                shutil.copy2(source_path, dest_path)
+            else:
+                print("No Django project detected in the current directory. "
+                      "You'll need to manually copy the gunicorn_config.py file.")
+                print(f"Source path: {source_path}")
+        except Exception as e:
+            print(f"Error copying gunicorn_config.py: {e}")
+            print("You'll need to manually copy the file from the package directory.")
+
 setup(
     name="django-gunicorn-audit-logs",
-    version="0.3.0",
+    version="0.3.2",
     packages=find_packages(),
     install_requires=[
         "Django>=3.2",
@@ -18,6 +53,9 @@ setup(
     extras_require={
         'async': ["celery>=5.2.0"],
         'mongo': ["pymongo>=4.0.0", "dnspython>=2.0.0"],
+    },
+    cmdclass={
+        'install': PostInstallCommand,
     },
     author="payme-alok",
     author_email="infra@paymeindia.in",

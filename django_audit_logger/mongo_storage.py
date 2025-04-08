@@ -9,30 +9,40 @@ from datetime import datetime, timedelta
 
 # Try to import MongoEngine first
 try:
-    import mongoengine
+    # Only import what we actually use
     from mongoengine import connect, Document, DateTimeField, StringField, IntField, DictField
     from mongoengine.connection import ConnectionFailure
-    from mongoengine.errors import NotUniqueError, ValidationError, OperationError
+    from mongoengine.errors import ValidationError
     MONGO_AVAILABLE = True
+    USING_MONGOENGINE = True
 except ImportError:
     # Fall back to PyMongo if MongoEngine is not available
     try:
         import pymongo
         from pymongo import MongoClient
-        from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
+        from pymongo.errors import ConnectionFailure, OperationFailure
         MONGO_AVAILABLE = True
         USING_MONGOENGINE = False
     except ImportError:
         MONGO_AVAILABLE = False
         USING_MONGOENGINE = False
+        # Define these to avoid NameError when they're referenced
+        pymongo = None
+        MongoClient = None
+        OperationFailure = Exception  # Fallback definition
     else:
         USING_MONGOENGINE = False
 else:
     USING_MONGOENGINE = True
 
-from django.conf import settings
-
-logger = logging.getLogger('django_audit_logger')
+# Use try/except for Django imports to handle cases where Django isn't fully initialized
+try:
+    from django.conf import settings
+except ImportError:
+    settings = None
+    logger = logging.getLogger('django_audit_logger')
+else:
+    logger = logging.getLogger('django_audit_logger')
 
 
 # Define MongoEngine document models if available
@@ -102,86 +112,83 @@ class MongoLogStorage:
             return
         
         # Get MongoDB settings from environment variables or Django settings
-        mongo_settings = getattr(settings, 'AUDIT_LOGS_MONGO', {})
+        mongo_settings = getattr(settings, 'AUDIT_LOGS_MONGO', {}) if settings else {}
         
         # MongoDB connection settings - try environment variables first, then settings
         self.connection_uri = os.environ.get('AUDIT_LOGS_MONGO_URI') or mongo_settings.get('URI', None)
         self.db_name = os.environ.get('AUDIT_LOGS_MONGO_DB_NAME') or mongo_settings.get('DB_NAME', 'audit_logs')
-        self.request_logs_collection_name = os.environ.get('AUDIT_LOGS_MONGO_REQUEST_LOGS_COLLECTION') or mongo_settings.get('REQUEST_LOGS_COLLECTION', 'request_logs')
-        self.gunicorn_logs_collection_name = os.environ.get('AUDIT_LOGS_MONGO_GUNICORN_LOGS_COLLECTION') or mongo_settings.get('GUNICORN_LOGS_COLLECTION', 'gunicorn_logs')
+        self.request_logs_collection_name = (
+            os.environ.get('AUDIT_LOGS_MONGO_REQUEST_LOGS_COLLECTION') or 
+            mongo_settings.get('REQUEST_LOGS_COLLECTION', 'request_logs')
+        )
+        self.gunicorn_logs_collection_name = (
+            os.environ.get('AUDIT_LOGS_MONGO_GUNICORN_LOGS_COLLECTION') or 
+            mongo_settings.get('GUNICORN_LOGS_COLLECTION', 'gunicorn_logs')
+        )
         
-        # Connect to MongoDB if URI is provided
-        if self.connection_uri:
-            try:
-                if USING_MONGOENGINE:
-                    # Connect using MongoEngine
-                    connect(db=self.db_name, host=self.connection_uri)
-                    # Update collection names if they differ from defaults
-                    if self.request_logs_collection_name != 'request_logs':
-                        RequestLogDocument._meta['collection'] = self.request_logs_collection_name
-                    if self.gunicorn_logs_collection_name != 'gunicorn_logs':
-                        GunicornLogDocument._meta['collection'] = self.gunicorn_logs_collection_name
-                    
-                    # Test connection
-                    RequestLogDocument.objects.count()
-                    logger.info("Successfully connected to MongoDB using MongoEngine")
-                else:
-                    # Connect using PyMongo
+        # Connect to MongoDB
+        try:
+            if USING_MONGOENGINE:
+                # Connect using MongoEngine
+                if self.connection_uri:
+                    connect(host=self.connection_uri, alias='audit_logs')
+                    logger.info("Connected to MongoDB using MongoEngine")
+            else:
+                # Connect using PyMongo
+                if self.connection_uri:
+                    # Define MongoClient before using it
                     self.client = MongoClient(self.connection_uri)
-                    # Test connection
-                    self.client.admin.command('ping')
                     self.db = self.client[self.db_name]
                     self.request_logs_collection = self.db[self.request_logs_collection_name]
                     self.gunicorn_logs_collection = self.db[self.gunicorn_logs_collection_name]
-                    
-                    # Create indexes for better query performance
-                    self._create_indexes()
-                    
-                    logger.info("Successfully connected to MongoDB using PyMongo")
-            except ConnectionFailure as e:
-                logger.error("Failed to connect to MongoDB: %s", e)
-                self.client = None
-            except Exception as e:
-                logger.error("Unexpected error connecting to MongoDB: %s", e)
-                self.client = None
+                    logger.info("Connected to MongoDB using PyMongo")
+            
+            # Create indexes
+            self._create_indexes()
+        except ConnectionFailure as e:
+            logger.error("Failed to connect to MongoDB: %s", e)
+        except (ValueError, AttributeError) as e:
+            logger.error("Invalid MongoDB configuration: %s", e)
     
     def _create_indexes(self):
         """Create indexes for better query performance."""
-        if USING_MONGOENGINE:
-            # Indexes are defined in the Document meta classes
-            return
-            
-        if self.request_logs_collection is None or self.gunicorn_logs_collection is None:
-            return
-        
-        # Indexes for request logs
-        self.request_logs_collection.create_index([("timestamp", pymongo.DESCENDING)])
-        self.request_logs_collection.create_index([("method", pymongo.ASCENDING)])
-        self.request_logs_collection.create_index([("path", pymongo.ASCENDING)])
-        self.request_logs_collection.create_index([("status_code", pymongo.ASCENDING)])
-        self.request_logs_collection.create_index([("user_id", pymongo.ASCENDING)])
-        self.request_logs_collection.create_index([("client_ip", pymongo.ASCENDING)])
-        
-        # Indexes for Gunicorn logs
-        self.gunicorn_logs_collection.create_index([("timestamp", pymongo.DESCENDING)])
-        self.gunicorn_logs_collection.create_index([("method", pymongo.ASCENDING)])
-        self.gunicorn_logs_collection.create_index([("url", pymongo.ASCENDING)])
-        self.gunicorn_logs_collection.create_index([("code", pymongo.ASCENDING)])
-        self.gunicorn_logs_collection.create_index([("user_id", pymongo.ASCENDING)])
+        try:
+            if not USING_MONGOENGINE and self.db is not None:
+                # Create indexes using PyMongo
+                if pymongo is not None:
+                    # Request logs indexes
+                    if self.request_logs_collection is not None:
+                        self.request_logs_collection.create_index([("timestamp", pymongo.DESCENDING)])
+                        self.request_logs_collection.create_index("method")
+                        self.request_logs_collection.create_index("path")
+                        self.request_logs_collection.create_index("status_code")
+                        self.request_logs_collection.create_index("user_id")
+                        self.request_logs_collection.create_index("ip_address")
+                    
+                    # Gunicorn logs indexes
+                    if self.gunicorn_logs_collection is not None:
+                        self.gunicorn_logs_collection.create_index([("timestamp", pymongo.DESCENDING)])
+                        self.gunicorn_logs_collection.create_index("method")
+                        self.gunicorn_logs_collection.create_index("url")
+                        self.gunicorn_logs_collection.create_index("code")
+                        self.gunicorn_logs_collection.create_index("user_id")
+        except OperationFailure as e:
+            logger.error("Failed to create MongoDB indexes: %s", e)
+        except (ValueError, AttributeError) as e:
+            logger.error("Invalid MongoDB configuration for indexes: %s", e)
     
-    def is_available(self) -> bool:
+    def is_available(self):
         """Check if MongoDB storage is available."""
-        if USING_MONGOENGINE:
-            try:
-                # Try a simple query to check connection
-                RequestLogDocument.objects.limit(1).count()
-                return True
-            except Exception:
-                return False
-        else:
-            return MONGO_AVAILABLE and self.client is not None
+        try:
+            if USING_MONGOENGINE:
+                return MONGO_AVAILABLE
+            else:
+                return self.client is not None and self.db is not None
+        except (ValueError, AttributeError) as e:
+            logger.error("Error checking MongoDB availability: %s", e)
+            return False
     
-    def create_request_log(self, **kwargs) -> bool:
+    def create_request_log(self, **kwargs):
         """
         Create a request log entry in MongoDB.
         
@@ -193,44 +200,33 @@ class MongoLogStorage:
         """
         if not self.is_available():
             return False
-            
+        
         try:
-            # Convert string JSON to dict if needed
-            for field in ['query_params', 'headers', 'response_headers']:
-                if field in kwargs and isinstance(kwargs[field], str):
-                    try:
-                        kwargs[field] = json.loads(kwargs[field])
-                    except json.JSONDecodeError:
-                        pass
-            
-            # Ensure timestamp is a datetime object
-            if 'timestamp' not in kwargs:
-                kwargs['timestamp'] = datetime.now()
-            
-            # Map client_ip to ip_address if needed (for backward compatibility)
-            if 'client_ip' in kwargs and 'ip_address' not in kwargs:
-                kwargs['ip_address'] = kwargs.pop('client_ip')
-                
-            # Map execution_time to response_time_ms if needed (for backward compatibility)
-            if 'execution_time' in kwargs and 'response_time_ms' not in kwargs:
-                execution_time = kwargs.pop('execution_time')
-                kwargs['response_time_ms'] = int(execution_time * 1000) if execution_time else None
-            
             if USING_MONGOENGINE:
                 # Create document using MongoEngine
-                doc = RequestLogDocument(**kwargs)
-                doc.save()
+                log = RequestLogDocument(**kwargs)
+                log.save()
                 return True
             else:
-                # Insert document using PyMongo
-                result = self.request_logs_collection.insert_one(kwargs)
-                # Explicitly check if the operation was acknowledged
-                return bool(result.acknowledged) if hasattr(result, 'acknowledged') else True
-        except Exception as e:
-            logger.error("Failed to create MongoDB request log: %s", e)
+                # Create document using PyMongo
+                if self.request_logs_collection is not None:
+                    # Ensure timestamp is a datetime object
+                    if 'timestamp' not in kwargs:
+                        kwargs['timestamp'] = datetime.now()
+                    self.request_logs_collection.insert_one(kwargs)
+                    return True
+                return False
+        except ValidationError as e:
+            logger.error("MongoDB validation error: %s", e)
+            return False
+        except OperationFailure as e:
+            logger.error("MongoDB operation error: %s", e)
+            return False
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.error("Invalid data for MongoDB request log: %s", e)
             return False
     
-    def create_gunicorn_log(self, **kwargs) -> bool:
+    def create_gunicorn_log(self, **kwargs):
         """
         Create a Gunicorn log entry in MongoDB.
         
@@ -242,35 +238,33 @@ class MongoLogStorage:
         """
         if not self.is_available():
             return False
-            
+        
         try:
-            # Ensure timestamp is a datetime object
-            if 'timestamp' not in kwargs:
-                kwargs['timestamp'] = datetime.now()
-            
-            # Convert string fields to dict if needed
-            for field in ['headers', 'response_headers']:
-                if field in kwargs and isinstance(kwargs[field], str):
-                    try:
-                        kwargs[field] = json.loads(kwargs[field])
-                    except json.JSONDecodeError:
-                        pass
-            
             if USING_MONGOENGINE:
                 # Create document using MongoEngine
-                doc = GunicornLogDocument(**kwargs)
-                doc.save()
+                log = GunicornLogDocument(**kwargs)
+                log.save()
                 return True
             else:
-                # Insert document using PyMongo
-                result = self.gunicorn_logs_collection.insert_one(kwargs)
-                # Explicitly check if the operation was acknowledged
-                return bool(result.acknowledged) if hasattr(result, 'acknowledged') else True
-        except Exception as e:
-            logger.error("Failed to create MongoDB Gunicorn log: %s", e)
+                # Create document using PyMongo
+                if self.gunicorn_logs_collection is not None:
+                    # Ensure timestamp is a datetime object
+                    if 'timestamp' not in kwargs:
+                        kwargs['timestamp'] = datetime.now()
+                    self.gunicorn_logs_collection.insert_one(kwargs)
+                    return True
+                return False
+        except ValidationError as e:
+            logger.error("MongoDB validation error: %s", e)
+            return False
+        except OperationFailure as e:
+            logger.error("MongoDB operation error: %s", e)
+            return False
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.error("Invalid data for MongoDB Gunicorn log: %s", e)
             return False
     
-    def get_request_logs(self,
+    def get_request_logs(self, 
                          start_date: Optional[datetime] = None,
                          end_date: Optional[datetime] = None,
                          method: Optional[str] = None,
@@ -278,7 +272,7 @@ class MongoLogStorage:
                          status_code: Optional[int] = None,
                          user_id: Optional[str] = None,
                          limit: int = 100,
-                         skip: int = 0) -> List[Dict[str, Any]]:
+                         skip: int = 0):
         """
         Query request logs from MongoDB.
         
@@ -287,13 +281,13 @@ class MongoLogStorage:
             end_date: Filter logs before this date
             method: Filter by HTTP method
             path: Filter by request path
-            status_code: Filter by status code
+            status_code: Filter by HTTP status code
             user_id: Filter by user ID
-            limit: Maximum number of logs to return
-            skip: Number of logs to skip (for pagination)
+            limit: Maximum number of results to return
+            skip: Number of results to skip (for pagination)
             
         Returns:
-            List of log entries as dictionaries
+            List of log entries
         """
         if not self.is_available():
             return []
@@ -305,12 +299,9 @@ class MongoLogStorage:
                 
                 # Add date range filter
                 if start_date or end_date:
-                    if start_date and end_date:
+                    if start_date:
                         query['timestamp__gte'] = start_date
-                        query['timestamp__lte'] = end_date
-                    elif start_date:
-                        query['timestamp__gte'] = start_date
-                    elif end_date:
+                    if end_date:
                         query['timestamp__lte'] = end_date
                 
                 # Add other filters
@@ -350,9 +341,17 @@ class MongoLogStorage:
                     query['user_id'] = user_id
                 
                 # Execute query
-                cursor = self.request_logs_collection.find(query).sort('timestamp', pymongo.DESCENDING).skip(skip).limit(limit)
-                return list(cursor)
-        except Exception as e:
+                if self.request_logs_collection is not None and pymongo is not None:
+                    cursor = self.request_logs_collection.find(query).sort('timestamp', pymongo.DESCENDING).skip(skip).limit(limit)
+                    return list(cursor)
+                return []
+        except ValidationError as e:
+            logger.error("MongoDB validation error: %s", e)
+            return []
+        except OperationFailure as e:
+            logger.error("MongoDB operation error: %s", e)
+            return []
+        except (ValueError, TypeError, AttributeError) as e:
             logger.error("Failed to query MongoDB request logs: %s", e)
             return []
     
@@ -364,7 +363,7 @@ class MongoLogStorage:
                           code: Optional[int] = None,
                           user_id: Optional[str] = None,
                           limit: int = 100,
-                          skip: int = 0) -> List[Dict[str, Any]]:
+                          skip: int = 0):
         """
         Query Gunicorn logs from MongoDB.
         
@@ -373,13 +372,13 @@ class MongoLogStorage:
             end_date: Filter logs before this date
             method: Filter by HTTP method
             url: Filter by URL
-            code: Filter by status code
+            code: Filter by HTTP status code
             user_id: Filter by user ID
-            limit: Maximum number of logs to return
-            skip: Number of logs to skip (for pagination)
+            limit: Maximum number of results to return
+            skip: Number of results to skip (for pagination)
             
         Returns:
-            List of log entries as dictionaries
+            List of log entries
         """
         if not self.is_available():
             return []
@@ -391,12 +390,9 @@ class MongoLogStorage:
                 
                 # Add date range filter
                 if start_date or end_date:
-                    if start_date and end_date:
+                    if start_date:
                         query['timestamp__gte'] = start_date
-                        query['timestamp__lte'] = end_date
-                    elif start_date:
-                        query['timestamp__gte'] = start_date
-                    elif end_date:
+                    if end_date:
                         query['timestamp__lte'] = end_date
                 
                 # Add other filters
@@ -436,9 +432,17 @@ class MongoLogStorage:
                     query['user_id'] = user_id
                 
                 # Execute query
-                cursor = self.gunicorn_logs_collection.find(query).sort('timestamp', pymongo.DESCENDING).skip(skip).limit(limit)
-                return list(cursor)
-        except Exception as e:
+                if self.gunicorn_logs_collection is not None and pymongo is not None:
+                    cursor = self.gunicorn_logs_collection.find(query).sort('timestamp', pymongo.DESCENDING).skip(skip).limit(limit)
+                    return list(cursor)
+                return []
+        except ValidationError as e:
+            logger.error("MongoDB validation error: %s", e)
+            return []
+        except OperationFailure as e:
+            logger.error("MongoDB operation error: %s", e)
+            return []
+        except (ValueError, TypeError, AttributeError) as e:
             logger.error("Failed to query MongoDB Gunicorn logs: %s", e)
             return []
     
@@ -480,7 +484,13 @@ class MongoLogStorage:
                     deleted_count += result.deleted_count
                 
             return deleted_count
-        except Exception as e:
+        except ValidationError as e:
+            logger.error("MongoDB validation error: %s", e)
+            return 0
+        except OperationFailure as e:
+            logger.error("MongoDB operation error: %s", e)
+            return 0
+        except (ValueError, TypeError, AttributeError) as e:
             logger.error("Failed to clean up old MongoDB logs: %s", e)
             return 0
 

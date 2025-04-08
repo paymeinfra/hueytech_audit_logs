@@ -1,4 +1,4 @@
-# Django Audit Logger
+# Django Gunicorn Audit Logs
 
 [![CI](https://github.com/paymeinfra/hueytech_audit_logs/actions/workflows/ci.yml/badge.svg)](https://github.com/paymeinfra/hueytech_audit_logs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/paymeinfra/hueytech_audit_logs/branch/main/graph/badge.svg)](https://codecov.io/gh/paymeinfra/hueytech_audit_logs)
@@ -7,7 +7,7 @@ A production-grade Django package for comprehensive request/response logging wit
 
 ## Package Structure
 
-The `django_audit_logger` package includes:
+The `django_gunicorn_audit_logs` package includes:
 
 1. **Core Middleware** for logging all HTTP requests and responses to PostgreSQL
 2. **Database Models** with optimized indexes for efficient querying
@@ -30,7 +30,7 @@ The `django_audit_logger` package includes:
 ### From your organization's repository
 
 ```bash
-pip install django_audit_logger --extra-index-url=https://your-org-repo-url/simple/
+pip install django-gunicorn-audit-logs --extra-index-url=https://your-org-repo-url/simple/
 ```
 
 ### Development installation
@@ -50,12 +50,12 @@ Add the following to your Django settings:
 ```python
 INSTALLED_APPS = [
     # ... other apps
-    'django_audit_logger',
+    'django_gunicorn_audit_logs',
 ]
 
 MIDDLEWARE = [
     # ... other middleware
-    'django_audit_logger.middleware.RequestLogMiddleware',
+    'django_gunicorn_audit_logs.middleware.RequestLogMiddleware',
 ]
 
 # Audit Logger Settings
@@ -67,7 +67,7 @@ AUDIT_LOGS = {
     'EXCLUDE_EXTENSIONS': ['.jpg', '.png', '.gif', '.css', '.js'],
     'MAX_BODY_LENGTH': 10000,  # Truncate bodies longer than this value
     'SENSITIVE_FIELDS': ['password', 'token', 'access_key', 'secret'],
-    'USER_ID_CALLABLE': 'django_audit_logger.utils.get_user_id',
+    'USER_ID_CALLABLE': 'django_gunicorn_audit_logs.utils.get_user_id',
     'EXTRA_DATA_CALLABLE': None,  # Optional function to add custom data
 }
 
@@ -104,7 +104,11 @@ The package is designed with production use in mind:
 
 ### Gunicorn Configuration
 
-The package provides a custom Gunicorn logger that logs requests to both a rotating file and the database. Configure it using these environment variables:
+The package provides a custom Gunicorn logger that logs requests to both a rotating file and the database. The configuration is designed to avoid the "Apps aren't loaded yet" error by deferring Django imports until after the application is initialized.
+
+During installation, the `gunicorn_config.py` file is automatically copied to your project directory, so you don't need to manually copy it.
+
+Configure it using these environment variables:
 
 ```bash
 # Basic Gunicorn configuration
@@ -122,25 +126,15 @@ GUNICORN_LOG_MAX_BYTES=10485760       # Maximum log file size (10MB default)
 GUNICORN_LOG_BACKUP_COUNT=10          # Number of backup files to keep
 ```
 
-### Error Email Notifications
-
-The package includes an error notification system that sends emails via AWS SES when exceptions occur in the middleware or logging system. Configure it using these environment variables:
+To start Gunicorn with the configuration:
 
 ```bash
-# AWS Credentials (required for SES email notifications)
-AWS_ACCESS_KEY_ID='your-access-key'
-AWS_SECRET_ACCESS_KEY='your-secret-key'
-AWS_SES_REGION_NAME='us-east-1'  # AWS region for SES
-
-# Email Configuration
-AUDIT_LOGS_ERROR_EMAIL_SENDER='alerts@yourdomain.com'
-AUDIT_LOGS_ERROR_EMAIL_RECIPIENTS='admin@yourdomain.com,devops@yourdomain.com'
-AUDIT_LOGS_RAISE_EXCEPTIONS='False'  # Set to 'True' to re-raise exceptions after logging
+gunicorn your_project.wsgi:application -c gunicorn_config.py
 ```
 
 ## Environment Variables
 
-Django Audit Logger can be configured using environment variables. Here's a list of available environment variables:
+Django Gunicorn Audit Logs can be configured using environment variables. Here's a list of available environment variables:
 
 ### Database Configuration
 
@@ -236,14 +230,14 @@ DATABASES = {
     }
 }
 
-DATABASE_ROUTERS = ['django_audit_logger.routers.AuditLogRouter']
+DATABASE_ROUTERS = ['django_gunicorn_audit_logs.routers.AuditLogRouter']
 ```
 
 Make sure to create the `audit_logs_db` database before running migrations:
 
 ```bash
 createdb audit_logs_db
-python manage.py migrate django_audit_logger --database=audit_logs
+python manage.py migrate django_gunicorn_audit_logs --database=audit_logs
 ```
 
 For production environments, add the database credentials to your `.env` file:
@@ -258,14 +252,14 @@ AUDIT_LOGS_DB_PORT=5432
 
 ## Asynchronous Logging with Celery
 
-Django Audit Logger supports asynchronous database logging using Celery tasks. This can significantly improve performance by moving database write operations to background tasks, especially in high-traffic environments.
+Django Gunicorn Audit Logs supports asynchronous database logging using Celery tasks. This can significantly improve performance by moving database write operations to background tasks, especially in high-traffic environments.
 
 ### Installation
 
 Install the package with Celery support:
 
 ```bash
-pip install django-audit-logger[async]
+pip install django-gunicorn-audit-logs[async]
 ```
 
 ### Configuration
@@ -300,7 +294,7 @@ You can customize the retry behavior in your Django settings:
 ```python
 # Celery task retry settings for audit logging
 CELERY_TASK_ROUTES = {
-    'django_audit_logger.tasks.create_request_log_entry': {
+    'django_gunicorn_audit_logs.tasks.create_request_log_entry': {
         'queue': 'audit_logs'
     }
 }
@@ -316,7 +310,7 @@ For extremely high-volume applications (millions to billions of requests), consi
    ```sql
    -- Example PostgreSQL partitioning by month
    CREATE TABLE audit_logs_partitioned (
-       LIKE django_audit_logger_requestlog INCLUDING ALL
+       LIKE django_gunicorn_audit_logs_requestlog INCLUDING ALL
    ) PARTITION BY RANGE (timestamp);
    
    -- Create monthly partitions
@@ -361,7 +355,7 @@ Once installed and configured, the middleware will automatically log all request
 You can access the logs through the Django admin interface or directly via the `RequestLog` and `GunicornLogModel` models:
 
 ```python
-from django_audit_logger.models import RequestLog, GunicornLogModel
+from django_gunicorn_audit_logs.models import RequestLog, GunicornLogModel
 
 # Get all Django request logs
 logs = RequestLog.objects.all()
@@ -388,13 +382,24 @@ error_gunicorn_logs = GunicornLogModel.objects.filter(code__gte=400)
 user_gunicorn_logs = GunicornLogModel.objects.filter(user_id='user123')
 ```
 
+#### Using Gunicorn Logging
+
+The package includes a custom Gunicorn configuration with a logger that automatically logs requests to both files and the database:
+
+1. The `gunicorn_config.py` file is automatically copied to your project directory during installation.
+
+2. Start Gunicorn with the config:
+   ```bash
+   gunicorn your_project.wsgi:application -c gunicorn_config.py
+   ```
+
 ### Gunicorn Configuration
 
 To use the included Gunicorn configuration with database logging:
 
 1. Copy the `gunicorn_config.py` file to your project:
    ```bash
-   cp /path/to/django_audit_logger/gunicorn_config.py /path/to/your/project/
+   cp /path/to/django_gunicorn_audit_logs/gunicorn_config.py /path/to/your/project/
    ```
 
 2. Start Gunicorn with the config:
@@ -430,14 +435,14 @@ python manage.py cleanup_audit_logs --log-type=gunicorn
 
 ## MongoDB Support for High-Volume Logging
 
-For extremely high-volume applications handling billions of requests, Django Audit Logger now supports MongoDB as an alternative storage backend. MongoDB provides better scaling capabilities for write-heavy workloads compared to traditional relational databases.
+For extremely high-volume applications handling billions of requests, Django Gunicorn Audit Logs now supports MongoDB as an alternative storage backend. MongoDB provides better scaling capabilities for write-heavy workloads compared to traditional relational databases.
 
 ### Installation
 
 Install the package with MongoDB support:
 
 ```bash
-pip install django-audit-logger[mongo]
+pip install django-gunicorn-audit-logs[mongo]
 ```
 
 ### Configuration
@@ -497,7 +502,7 @@ If MongoDB is enabled but unavailable, the system will automatically fall back t
 
 ```python
 # Import the MongoDB storage backend
-from django_audit_logger.mongo_storage import mongo_storage
+from django_gunicorn_audit_logs.mongo_storage import mongo_storage
 
 # Get recent error logs
 error_logs = mongo_storage.get_request_logs(
@@ -517,7 +522,7 @@ deleted_count = mongo_storage.cleanup_old_logs(days=90)
 
 ## Dual Storage: PostgreSQL and MongoDB
 
-For critical applications that require both the relational capabilities of PostgreSQL and the scaling advantages of MongoDB, Django Audit Logger supports writing logs to both databases simultaneously.
+For critical applications that require both the relational capabilities of PostgreSQL and the scaling advantages of MongoDB, Django Gunicorn Audit Logs supports writing logs to both databases simultaneously.
 
 ### Configuration
 
@@ -592,7 +597,7 @@ python examples/setup_audit_logs_db.py --project-path /path/to/your/project --db
 2. **Database Connection Issues**
    - Check database credentials in your .env file
    - Ensure the audit_logs database exists
-   - Run migrations with: `python manage.py migrate django_audit_logger --database=audit_logs`
+   - Run migrations with: `python manage.py migrate django_gunicorn_audit_logs --database=audit_logs`
 
 3. **Email Notification Issues**
    - Verify AWS credentials are correctly set
@@ -618,7 +623,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Environment Variables
 
-The Django Audit Logger can be configured using the following environment variables:
+The Django Gunicorn Audit Logs can be configured using the following environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -643,7 +648,7 @@ The Django Audit Logger can be configured using the following environment variab
 
 ## Body Size Configuration
 
-By default, Django Audit Logger truncates request and response bodies to 8192 bytes to prevent excessive database usage. You can customize this behavior in two ways:
+By default, Django Gunicorn Audit Logs truncates request and response bodies to 8192 bytes to prevent excessive database usage. You can customize this behavior in two ways:
 
 1. **Adjust the maximum body length**:
    ```python

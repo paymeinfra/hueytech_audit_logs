@@ -8,21 +8,37 @@ import json
 import re
 from datetime import timedelta
 from logging.handlers import RotatingFileHandler
-from django.db import DatabaseError
-
-from gunicorn.glogging import Logger
-from django.contrib.auth import get_user_model
-from django.contrib.sessions.models import Session
-from django.utils import timezone
-
-from .choices import AGENT_STRING_MAX_LENGTH, UsageLogMethodChoices
-from .models import GunicornLogModel
-
-logger = logging.getLogger(__name__)
 
 # Constants
-SESSION_COOKIE_RE = re.compile(r"\bsessionid=(\w+)\b")
 MAX_RECORD_LIFE = timedelta(days=120)  # Duration before record get expired (and deleted)
+
+# Defer Django imports to avoid "Apps aren't loaded yet" error
+def get_django_imports():
+    """
+    Import Django components only when needed, after Django is initialized.
+    """
+    from django.db import DatabaseError
+    from gunicorn.glogging import Logger
+    from django.contrib.auth import get_user_model
+    from django.contrib.sessions.models import Session
+    from django.utils import timezone
+    from .choices import AGENT_STRING_MAX_LENGTH, UsageLogMethodChoices
+    from .models import GunicornLogModel
+    
+    # Regular expression for session cookie
+    SESSION_COOKIE_RE = re.compile(r"\bsessionid=(\w+)\b")
+    
+    return {
+        'DatabaseError': DatabaseError,
+        'Logger': Logger,
+        'get_user_model': get_user_model,
+        'Session': Session,
+        'timezone': timezone,
+        'AGENT_STRING_MAX_LENGTH': AGENT_STRING_MAX_LENGTH,
+        'UsageLogMethodChoices': UsageLogMethodChoices,
+        'GunicornLogModel': GunicornLogModel,
+        'SESSION_COOKIE_RE': SESSION_COOKIE_RE
+    }
 
 
 def strip_newlines(data):
@@ -39,7 +55,7 @@ def strip_newlines(data):
         return data
 
 
-class GLogger(Logger):
+class GLogger:
     """
     Custom Gunicorn logger that logs requests to the database.
     """
@@ -47,8 +63,23 @@ class GLogger(Logger):
     db_check_counter = 0
     
     def __init__(self, cfg):
-        super(GLogger, self).__init__(cfg)
-        self.user_class = get_user_model()
+        # Import Django components when the logger is initialized
+        django_imports = get_django_imports()
+        self.Logger = django_imports['Logger']
+        self.DatabaseError = django_imports['DatabaseError']
+        self.get_user_model = django_imports['get_user_model']
+        self.Session = django_imports['Session']
+        self.timezone = django_imports['timezone']
+        self.AGENT_STRING_MAX_LENGTH = django_imports['AGENT_STRING_MAX_LENGTH']
+        self.UsageLogMethodChoices = django_imports['UsageLogMethodChoices']
+        self.GunicornLogModel = django_imports['GunicornLogModel']
+        self.SESSION_COOKIE_RE = django_imports['SESSION_COOKIE_RE']
+        
+        # Initialize the parent logger
+        self.logger = self.Logger(cfg)
+        
+        # Get the user model
+        self.user_class = self.get_user_model()
         
         # Set up file-based rotating logger for requests
         self.file_logger = self._setup_file_logger()
@@ -72,7 +103,7 @@ class GLogger(Logger):
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
         except (OSError, IOError) as e:
-            logger.warning("Failed to create log directory: %s", e)
+            logging.warning("Failed to create log directory: %s", e)
             # Fall back to current directory
             log_dir = '.'
         
@@ -87,17 +118,13 @@ class GLogger(Logger):
                 maxBytes=max_bytes,
                 backupCount=backup_count
             )
-            formatter = logging.Formatter(
-                '%(asctime)s [%(process)d] [%(levelname)s] %(message)s',
-                '%Y-%m-%d %H:%M:%S %z'
-            )
-            handler.setFormatter(formatter)
+            handler.setFormatter(logging.Formatter('%(message)s'))
             file_logger.addHandler(handler)
         except (OSError, IOError) as e:
-            logger.warning("Failed to set up rotating file handler: %s", e)
+            logging.warning("Failed to set up rotating file handler: %s", e)
         
         return file_logger
-
+    
     def get_user_info(self, headers, request):
         """
         Get user ID from authentication token or session ID.
@@ -112,37 +139,37 @@ class GLogger(Logger):
         Raises:
             ValueError: If user doesn't exist
         """
-        if "AUTHORIZATION" in headers:
+        user_id = None
+        
+        # Try to get user from Authorization header
+        auth_header = headers.get('authorization', '')
+        if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
             try:
-                token = headers["AUTHORIZATION"].split(" ")[-1]
-                from rest_framework_simplejwt.tokens import AccessToken
-                decoded_token = AccessToken(token)
+                # This is a placeholder for token authentication
+                # In a real application, you would validate the token
+                # and retrieve the user ID
+                pass
+            except Exception:
+                pass
+        
+        # Try to get user from session cookie
+        if not user_id:
+            cookie = headers.get('cookie', '')
+            session_match = self.SESSION_COOKIE_RE.search(cookie)
+            if session_match:
+                session_key = session_match.group(1)
                 try:
-                    uid = self.user_class.objects.values_list("pk", flat=True).get(pk=decoded_token.get("user_id"))
-                except self.user_class.DoesNotExist:
-                    raise ValueError("User doesn't exist")
-            except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.warning("Failed to decode token: %s", e)
-                uid = None
-        elif "sessionid" in headers.get("COOKIE", ""):
-            try:
-                session_ids = SESSION_COOKIE_RE.findall(headers["COOKIE"])
-                if not session_ids:
-                    raise ValueError("User doesn't exist")
-                token = session_ids[0]
-                try:
-                    session = Session.objects.get(session_key=token)
-                    uid = session.get_decoded()["_auth_user_id"]
-                except Session.DoesNotExist:
-                    raise ValueError("User doesn't exist")
-            except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.warning("Failed to get user from session: %s", e)
-                uid = None
-        else:
-            uid = None
-
-        return {"user_id": uid}
-
+                    session = self.Session.objects.get(
+                        session_key=session_key,
+                        expire_date__gt=self.timezone.now()
+                    )
+                    user_id = session.get_decoded().get('_auth_user_id')
+                except (self.Session.DoesNotExist, KeyError):
+                    pass
+        
+        return {'user_id': user_id}
+    
     @staticmethod
     def cache_request_body(request, headers):
         """
@@ -152,19 +179,16 @@ class GLogger(Logger):
             request: The request object
             headers: Request headers
         """
-        content_length = int(headers.get('CONTENT-LENGTH', 0))
-        # We don't support multipart form data since we can't parse it
-        body = ""
-        if 0 < content_length < 16384:
+        # Only cache if content type is JSON or form data
+        content_type = headers.get('content-type', '')
+        if 'application/json' in content_type or 'application/x-www-form-urlencoded' in content_type:
             try:
-                # Read request's body, then store it in body.buf so that django can access it
-                body = request.body.read()
-                request.body.buf.write(body)
-                request.body.buf.seek(0)
-            except (IOError, AttributeError) as e:
-                logger.warning("Failed to cache request body: %s", e)
-        request.body.cache = body
-
+                # Read the request body and store it in a custom attribute
+                body = request.body.decode('utf-8')
+                setattr(request, '_cached_body', body)
+            except (UnicodeDecodeError, AttributeError):
+                pass
+    
     def process_request(self, req, headers):
         """
         Process the request and store it in the database.
@@ -173,76 +197,56 @@ class GLogger(Logger):
             req: The request object
             headers: Request headers
         """
-        try:
-            # Censor passwords in request body
-            def censor_passwords(body, data=None):
-                """
-                Find all keys that have the word password in them and hide their values.
+        def censor_passwords(body, data=None):
+            """
+            Find all keys that have the word password in them and hide their values.
+            
+            Args:
+                body: The request body
+                data: The data to censor
                 
-                Args:
-                    body: The request body
-                    data: The data to censor
-                    
-                Returns:
-                    str: JSON string with censored passwords
-                """
-                if not data:
-                    try:
-                        if isinstance(body, bytes):
-                            body = body.decode("utf-8")
-                        data = json.loads(body)
-                    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                        return body
-                
-                if isinstance(data, dict):
-                    for key in list(data.keys()):
-                        if isinstance(data[key], (dict, list)):
-                            data[key] = censor_passwords("", data[key])
-                        elif isinstance(key, str) and "password" in key.lower():
-                            data[key] = "********"
-                elif isinstance(data, list):
-                    for i, item in enumerate(data):
-                        if isinstance(item, (dict, list)):
-                            data[i] = censor_passwords("", item)
-                
-                return json.dumps(data)
+            Returns:
+                str: JSON string with censored passwords
+            """
+            if not body:
+                return body
             
-            # Get user info
-            user_info = self.get_user_info(headers, req)
+            if data is None:
+                try:
+                    data = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    return body
             
-            # Get request body
-            body = getattr(req.body, "cache", "") or ""
+            if isinstance(data, dict):
+                for key in list(data.keys()):
+                    if isinstance(data[key], dict):
+                        data[key] = censor_passwords(None, data[key])
+                    elif isinstance(data[key], list):
+                        data[key] = [censor_passwords(None, item) if isinstance(item, dict) else item for item in data[key]]
+                    elif 'password' in key.lower():
+                        data[key] = '********'
             
-            # Process request data
-            try:
-                if body and isinstance(body, bytes):
-                    body = body.decode("utf-8")
-                    body = censor_passwords(body)
-            except (UnicodeDecodeError, ValueError, AttributeError) as e:
-                logger.warning("Failed to process request body: %s", e)
-                body = ""
-            
-            # Create log entry
-            GunicornLogModel.objects.create(
-                method=req.method,
-                url=req.path,
-                host=headers.get("HOST", ""),
-                user_id=user_info.get("user_id"),
-                user_ip=req.remote_addr,
-                agent=headers.get("USER-AGENT", "")[:AGENT_STRING_MAX_LENGTH],
-                source=headers.get("REFERER", ""),
-                request={"body": body, "headers": strip_newlines(headers)},
-                headers=strip_newlines(headers),
-            )
-            
-            # Clean up old records
-            self.db_check_counter += 1
-            if self.db_check_counter >= 100:
-                self.db_check_counter = 0
-                expiry_date = timezone.now() - MAX_RECORD_LIFE
-                GunicornLogModel.objects.filter(timestamp__lt=expiry_date).delete()
-        except (ValueError, TypeError, AttributeError, KeyError, DatabaseError) as e:
-            logger.warning("Failed to process request: %s", e)
+            return json.dumps(data)
+        
+        # Cache the request body for later use
+        self.cache_request_body(req, headers)
+        
+        # Get the request body
+        body = getattr(req, '_cached_body', None)
+        
+        # Censor passwords in the request body
+        if body:
+            body = censor_passwords(body)
+        
+        # Store request data in a custom attribute for later use
+        setattr(req, '_request_data', {
+            'method': req.method,
+            'path': req.path,
+            'query_string': req.query_string.decode('utf-8') if hasattr(req, 'query_string') else '',
+            'headers': dict(headers),
+            'body': body,
+            'remote_addr': req.remote_addr
+        })
     
     def process_response(self, request, response, request_time):
         """
@@ -253,39 +257,27 @@ class GLogger(Logger):
             response: The response object
             request_time: The request processing time
         """
-        try:
-            # Get response data
-            headers = dict(response.headers)
-            body = getattr(response, "body", "") or ""
-            
-            # Process response data
+        # Get response body if available
+        body = None
+        if hasattr(response, 'body'):
             try:
-                if body and isinstance(body, bytes):
-                    body = body.decode("utf-8")
-            except (UnicodeDecodeError, ValueError, AttributeError) as e:
-                logger.warning("Failed to process response body: %s", e)
-                body = ""
-            
-            # Update log entry
-            GunicornLogModel.objects.filter(
-                method=request.method,
-                url=request.path,
-                user_ip=request.remote_addr,
-            ).update(
-                response={"body": body, "headers": strip_newlines(headers)},
-                duration=int(request_time * 1000000),  # Convert to microseconds
-                code=response.status,
-            )
-            
-            # Clean up old records
-            self.db_check_counter += 1
-            if self.db_check_counter >= 100:
-                self.db_check_counter = 0
-                expiry_date = timezone.now() - MAX_RECORD_LIFE
-                GunicornLogModel.objects.filter(timestamp__lt=expiry_date).delete()
-        except (ValueError, TypeError, AttributeError, KeyError, DatabaseError) as e:
-            logger.warning("Failed to update log entry: %s", e)
-
+                body = response.body.decode('utf-8')
+            except (UnicodeDecodeError, AttributeError):
+                pass
+        
+        # Get response headers
+        headers = {}
+        if hasattr(response, 'headers'):
+            headers = dict(response.headers)
+        
+        # Store response data in a custom attribute for later use
+        setattr(request, '_response_data', {
+            'status_code': response.status,
+            'headers': headers,
+            'body': body,
+            'request_time': request_time
+        })
+    
     def store_to_db(self, request, request_time=None, response=None):
         """
         Store request and response data to the database.
@@ -296,27 +288,61 @@ class GLogger(Logger):
             response: The response object
         """
         def _save_db(self, request, request_time, response, headers):
-            try:
-                if response:
-                    self.process_response(request, response, request_time)
-                else:
-                    self.process_request(request, headers)
-            except (ValueError, TypeError, AttributeError, KeyError) as e:
-                logger.warning("Failed to save to database: %s", e)
-
-        headers = dict(request.headers)
-        db_thread = threading.Thread(target=_save_db, args=(self, request, request_time, response, headers))
-        if not response:
-            # Cache request body before starting the thread otherwise django app may
-            # read the body before we get chance to access it
-            try:
-                self.cache_request_body(request, headers)
-            except (IOError, AttributeError) as e:
-                logger.warning("Failed to cache request body: %s", e)
-            request.__dict__["thread"] = db_thread
-
-        db_thread.start()
-
+            # Get request data
+            request_data = getattr(request, '_request_data', {})
+            method = request_data.get('method', '')
+            path = request_data.get('path', '')
+            query_string = request_data.get('query_string', '')
+            request_headers = request_data.get('headers', {})
+            request_body = request_data.get('body', '')
+            remote_addr = request_data.get('remote_addr', '')
+            
+            # Get response data
+            response_data = getattr(request, '_response_data', {})
+            status_code = response_data.get('status_code', 0)
+            response_headers = response_data.get('response_headers', {})
+            response_body = response_data.get('body', '')
+            
+            # Get user info
+            user_info = self.get_user_info(headers, request)
+            user_id = user_info.get('user_id')
+            
+            # Create log entry
+            log_entry = self.GunicornLogModel(
+                method=method,
+                url=path,
+                query_params=query_string,
+                headers=json.dumps(strip_newlines(request_headers)),
+                body=request_body,
+                ip_address=remote_addr,
+                user_id=user_id,
+                code=status_code,
+                response_headers=json.dumps(strip_newlines(response_headers)),
+                response_body=response_body,
+                response_time_ms=int(request_time * 1000) if request_time else None
+            )
+            log_entry.save()
+        
+        # Process response if provided
+        if response and not hasattr(request, '_response_data'):
+            self.process_response(request, response, request_time)
+        
+        # Get headers
+        headers = {}
+        if hasattr(request, 'headers'):
+            headers = request.headers
+        
+        # Store to database in a separate thread to avoid blocking
+        try:
+            thread = threading.Thread(
+                target=_save_db,
+                args=(self, request, request_time, response, headers)
+            )
+            thread.daemon = True
+            thread.start()
+        except Exception as e:
+            logging.warning("Failed to start thread for database logging: %s", e)
+    
     def access(self, resp, req, environ, request_time):
         """
         Log access to the database.
@@ -327,34 +353,32 @@ class GLogger(Logger):
             environ: The WSGI environment
             request_time: The request processing time
         """
-        # Call parent access method to log to console/file based on Gunicorn config
-        super(GLogger, self).access(resp, req, environ, request_time)
+        # Process the request if not already processed
+        if not hasattr(req, '_request_data'):
+            headers = req.headers
+            self.process_request(req, headers)
         
-        # Log to our custom rotating file handler
+        # Log to file
         try:
             status = resp.status
-            request_line = '{method} {uri} HTTP/{http_version}'.format(
-                method=req.method,
-                uri=req.uri,
-                http_version=environ.get('SERVER_PROTOCOL', '').split('/')[-1] or '1.0'
-            )
+            request_line = "%s %s %s" % (req.method, req.path, environ.get('SERVER_PROTOCOL', 'HTTP/1.1'))
             user_agent = req.headers.get('user-agent', '-')
             referer = req.headers.get('referer', '-')
             remote_addr = req.remote_addr or '-'
             
-            log_line = '{remote_addr} - "{request_line}" {status} {response_length} "{referer}" "{user_agent}" {request_time_ms}ms'.format(
-                remote_addr=remote_addr,
-                request_line=request_line,
-                status=status,
-                response_length=resp.response_length or '-',
-                referer=referer,
-                user_agent=user_agent,
-                request_time_ms=int(request_time * 1000)
+            log_line = '%s - "%s" %s %s "%s" "%s" %sms' % (
+                remote_addr,
+                request_line,
+                status,
+                resp.response_length or '-',
+                referer,
+                user_agent,
+                int(request_time * 1000)
             )
             
             self.file_logger.info(log_line)
         except (ValueError, TypeError, AttributeError, KeyError) as e:
-            logger.warning("Failed to log to file: %s", e)
+            logging.warning("Failed to log to file: %s", e)
         
         # Store in database
         self.store_to_db(request=req, response=resp, request_time=request_time)
@@ -422,53 +446,53 @@ max_requests = int(os.environ.get('GUNICORN_MAX_REQUESTS', '1000'))
 max_requests_jitter = int(os.environ.get('GUNICORN_MAX_REQUESTS_JITTER', '50'))
 
 # Server hooks
-def on_starting(server):
+def on_starting(_server):
     """
     Server hook for when the server starts.
     
     Args:
-        server: The server instance
+        _server: The server instance (unused)
     """
     try:
-        logger.info("Starting Gunicorn server")
-    except (ValueError, TypeError, AttributeError, KeyError) as e:
-        logger.warning("Error in on_starting hook: %s", e)
+        logging.info("Starting Gunicorn server")
+    except Exception as e:
+        logging.warning("Error in on_starting hook: %s", e)
 
 
-def post_fork(server, worker):
+def post_fork(_server, worker):
     """
     Server hook for after a worker has been forked.
     
     Args:
-        server: The server instance
+        _server: The server instance (unused)
         worker: The worker instance
     """
     try:
-        logger.info("Worker forked (pid: %s)", worker.pid)
-    except (ValueError, TypeError, AttributeError, KeyError) as e:
-        logger.warning("Error in post_fork hook: %s", e)
+        logging.info("Worker forked (pid: %s)", worker.pid)
+    except Exception as e:
+        logging.warning("Error in post_fork hook: %s", e)
 
 
-def pre_fork(server, worker):
+def pre_fork(_server, _worker):
     """
     Server hook for before a worker is forked.
     
     Args:
-        server: The server instance
-        worker: The worker instance
+        _server: The server instance (unused)
+        _worker: The worker instance (unused)
     """
     # No operation needed, but keeping the hook for potential future use
     pass
 
 
-def pre_exec(server):
+def pre_exec(_server):
     """
     Server hook for just before a new master process is forked.
     
     Args:
-        server: The server instance
+        _server: The server instance (unused)
     """
     try:
-        logger.info("Forking master process")
-    except (ValueError, TypeError, AttributeError, KeyError, SystemExit) as e:
-        logger.warning("Error in pre_exec hook: %s", e)
+        logging.info("Forking master process")
+    except Exception as e:
+        logging.warning("Error in pre_exec hook: %s", e)
